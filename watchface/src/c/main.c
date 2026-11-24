@@ -615,7 +615,7 @@ static void scene_dli(int zone) {
   }
 }
 
-static void build_bg(void) {
+__attribute__((unused)) static void build_bg(void) {
   s_nbg = 0;
   switch (s_scene) {
     case 0: bg_stars(36, 100); break;
@@ -648,7 +648,7 @@ static const char *DAYS[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
 static const char *MONTHS[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN",
                                "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
 
-static void build_fg(void) {
+__attribute__((unused)) static void build_fg(void) {
   time_t now = time(NULL);
   struct tm *t = localtime(&now);
 
@@ -726,7 +726,7 @@ static void build_fg(void) {
 }
 
 // Builds each zone's display list: background objects first, then foreground
-static void build_display_lists(void) {
+__attribute__((unused)) static void build_display_lists(void) {
   int zy = 0;
   for (int z = 0; z < NUM_ZONES; z++) {
     int zh = ZONES[z].height;
@@ -965,7 +965,7 @@ static void emu_draw(GContext *ctx) {
 }
 #endif
 
-static void maria_draw(GContext *ctx) {
+__attribute__((unused)) static void maria_draw(GContext *ctx) {
   GBitmap *fb = graphics_capture_frame_buffer(ctx);
   if (!fb) {
     return;
