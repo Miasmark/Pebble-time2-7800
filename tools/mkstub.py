@@ -565,7 +565,10 @@ def bomber_ground():
 # per show: (the first line it may use, items (x, line, layer, glyph or wide tile, pw))
 BACKDROPS = [
     (16, [(x, y, l, "STAR%d" % l, PW_STAR) for x, y, l in STARS]),
-    (80, [(4, 80, L_STILL, "ROOTS", PW_P7), (140, 80, L_STILL, "ROOTS", PW_P7),
+    # the drill: the clock's zone stays black -- above ground, so the time reads
+    # well -- and the earth starts at the rock
+    (80, [(0, 80, L_STILL, "BAND", pw(6, 20)), (80, 80, L_STILL, "BAND", pw(6, 20)),
+          (4, 112, L_STILL, "ROOTS", PW_P7), (140, 112, L_STILL, "ROOTS", PW_P7),
           (0, 120, L_STILL, "STRATA", PW_WIDE7), (80, 120, L_STILL, "STRATA", PW_WIDE7),
           (0, 152, L_STILL, "STRATA", PW_WIDE7), (80, 152, L_STILL, "STRATA", PW_WIDE7),
           (144, 98, L_STILL, "PEBBLES", PW_P7), (8, 129, L_STILL, "PEBBLES", PW_P7),
@@ -1848,7 +1851,8 @@ bd_item:
     LSR
     LSR
     STA BDZ
-    ; the top part: zone BDZ points at page $E0 + t
+    ; the top part: zone BDZ points at page base + t (the item's graphics block:
+    ; $E0, or $A0 for the second)
     TAX
     CPX BDZMIN
     BCC bd_lower
@@ -1856,12 +1860,12 @@ bd_item:
     BCS bd_loop               ; in the bar or below
     LDA PUT_T
     CLC
-    ADC #$E0
+    ADC bd_hb,Y
     STA TMP_HI
     JSR bd_add
 bd_lower:
-    ; the part that spills into the next zone, if any: page $D0 + t there, and
-    ; holey DMA blanks the pages outside $E0-$EF (as put_y does)
+    ; the part that spills into the next zone, if any: page base - $10 + t
+    ; there, and holey DMA blanks the pages outside the block (as put_y does)
     LDA PUT_T
     BEQ bd_loop
     LDY SIDX
@@ -1875,9 +1879,12 @@ bd_lower:
     BCC bd_loop
     CPX #$0C
     BCS bd_loop
-    LDA PUT_T
+    LDY SIDX
+    LDA bd_hb,Y
+    SEC
+    SBC #$10
     CLC
-    ADC #$D0
+    ADC PUT_T
     STA TMP_HI
     JSR bd_add
     JMP bd_loop
@@ -2381,7 +2388,8 @@ assert _o <= 256, "the glyph pages are full (%d bytes)" % _o
 # the second block: the characters, then the words, then the snow
 WORDS = ["GAME", "OVER", "STAGE", "CLEAR", "NEW", "HI"]
 BLOCK2 = [(n, l) for n, l in small_chars()]           # one byte each
-BLOCK2_WIDE = [("WD_" + w,) + word_lines(w) for w in WORDS] + [("SNOW", snow_tile(), 32)]
+BLOCK2_WIDE = [("WD_" + w,) + word_lines(w) for w in WORDS] + [("SNOW", snow_tile(), 32),
+               ("BAND", [[2] * 80 for _ in range(16)], 20)]
 BLOCK2_LO = {}
 _o = len(BLOCK2)
 for _n, _l, _b in BLOCK2_WIDE:
@@ -2407,6 +2415,8 @@ def source():
         a("%-9s= $%02X" % (name, BLOCK2_LO[name]))
         if name == "SNOW":    # read through a 20-byte window that wanders over it
             a("PW_SNOW  = $%02X" % pw(1, 20))
+        elif name == "BAND":
+            pass
         else:
             a("PW_%-6s= $%02X" % (name[3:], pw(0, nb)))
     for name, _, _ in WIDE:
@@ -2477,6 +2487,7 @@ def source():
     wides = [n for n, _, _ in WIDE]
     pictures = dict(GLYPHS)
     pictures.update((n, l) for n, l, _ in WIDE)
+    pictures.update((n, l) for n, l, _ in BLOCK2_WIDE)
     def height(g):        # lines down to its last drawn one
         if g == "STAR2":
             # a near star's streak is never carried into the next zone: at a zone's
@@ -2484,7 +2495,11 @@ def source():
             # moment as it crosses -- which reads as a twinkle, so it stays
             return 1
         return max(i + 1 for i, row in enumerate(pictures[g]) if any(row))
+    def hb(g):
+        return GFX2 >> 8 if g in BLOCK2_LO else GFX >> 8
     def lo(g):
+        if g in BLOCK2_LO:
+            return BLOCK2_LO[g]
         return names.index(g) * 4 if g in names else WIDE_LO[g]
     a("bd_moving:            ; 1: the backdrop moves, so it is rebuilt every frame")
     a("    .byte " + ",".join("$%02X" % int(any(t[2] != L_STILL for t in its)) for _, its in BACKDROPS))
@@ -2494,7 +2509,7 @@ def source():
     a("    .byte " + ",".join("$%02X" % f for f in first))
     for nm, fn in (("bd_x", lambda t: t[0]), ("bd_y", lambda t: t[1] & 0xFF), ("bd_l", lambda t: t[2]),
                    ("bd_g", lambda t: lo(t[3])), ("bd_pw", lambda t: t[4]),
-                   ("bd_h", lambda t: height(t[3]))):
+                   ("bd_h", lambda t: height(t[3])), ("bd_hb", lambda t: hb(t[3]))):
         a("%s:" % nm)
         for k in range(0, len(items), 16):
             a("    .byte " + ",".join("$%02X" % fn(t) for t in items[k:k + 16]))
