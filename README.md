@@ -17,10 +17,10 @@ a flick, at the top of the hour, and when the face starts.
 
 | (hour + channel) mod 4 | show, :57 to :02 |
 |---|---|
-| 0 | **formation** -- two attackers fly in, three volleys, the old minute explodes, the new one fades in; all of it over a three-layer star field falling behind ([closer look](docs/starfield.gif)) |
-| 1 | **drill rig** -- a rig bores up through the rock, the old minute shakes and crumbles, the rig pushes the new one up into place |
-| 2 | **bomber run** -- the ground scrolls, a bomber climbs in and its bomb takes out the old minute; the new one fades in as it flies off |
-| 3 | **lander** -- a lander comes down, lifts the old minute away and sets the new one down in a puff of dust |
+| 0 | **formation**, in deep space -- two attackers fly in, three volleys, the old minute explodes, the new one fades in; a three-layer star field falls behind ([closer look](docs/starfield.gif)) |
+| 1 | **drill rig**, under ground -- a rig bores up through the rock, the old minute shakes and crumbles, the rig pushes the new one up into place; earth with roots, strata, stones and a fossil behind |
+| 2 | **bomber run**, over farmland -- the ground scrolls, a bomber climbs in and its bomb takes out the old minute; the new one fades in as it flies off; fields, trees and houses scroll by with the ground |
+| 3 | **lander**, on the moon -- a lander comes down, lifts the old minute away and sets the new one down in a puff of dust; stars, the Earth, and cratered ground along the bottom |
 
 - `watchface/` — the Pebble project. The 7800 is `watchface/src/c/emu`; the
   cartridge it runs is `watchface/resources/data/clockstub.a78`.
@@ -54,15 +54,16 @@ burst. A lost phone link still vibrates at once.
 
 The cartridge draws in front of the banner (its background colour is
 see-through there), except palette 7: that is the backdrop, and it passes behind
-the banner, showing only where the banner leaves the tube black. The formation
-hour's stars are drawn in palette 7 for that reason.
+the banner, showing only where the banner leaves the tube black. The shows'
+backdrops are drawn in palette 7 for that reason (each show sets its own palette
+7 and background colour); the ground ones start below the banner.
 
 ## What is here
 
 | | |
 |---|---|
 | `tools/gen_m6502_tables.py` | Generates the core's opcode tables (`m6502_tables.h`) from the toolkit's `m6502.py`: one opcode table for both projects. |
-| `tools/mkstub.py` | Builds `clockstub.a78`, a 16K cartridge that plays the minute change by itself from the clock registers, with one of four shows each hour; a cruiser crosses the bottom once an hour, a step a minute, over a lives-and-score bar in character mode (a life per 20% of battery, today's steps as the 1UP score); the cruiser and the lives are the hour's vehicle -- ship, rig, plane or lander. Moving actors are placed to the line across zone boundaries with holey DMA, as 7800 games do. No input recordings: a watch face gets none to replay. |
+| `tools/mkstub.py` | Builds `clockstub.a78`, a 16K cartridge that plays the minute change by itself from the clock registers, with one of four shows each hour, each with its own backdrop; a cruiser crosses the bottom once an hour, a step a minute, over a lives-and-score bar in character mode (a life per 20% of battery, today's steps as the 1UP score); the cruiser and the lives are the hour's vehicle -- ship, rig, plane or lander. Moving actors are placed to the line across zone boundaries with holey DMA, as 7800 games do. No input recordings: a watch face gets none to replay. |
 | `docs/clock-registers.md` | The read-only block at `$0600-$060F` through which the watch tells a ROM the time (clear of every mapper and add-on, so any cartridge size keeps it). |
 | `tests/harte_pack.py`, `tests/harte_run.c` | Tom Harte's SingleStepTests for the 6502: 10,000 cases for each of the 256 opcodes, checking registers, memory and cycle counts. |
 | `tests/klaus_run.c` | Klaus Dormann's 6502 functional test. |
@@ -119,9 +120,10 @@ python tests/dma_fit.py --toolkit ../a7800-toolkit --run build/a78run
 
 - The MAME side of the clock registers: a cart device in the fork that fills
   `$0600-$060F` from the host clock, so a stub runs the same in MAME.
-- Speed on the watch itself. On this host the clock stub costs about 0.7 million
-  x86 instructions per drawn frame (callgrind, `-Os`); the watch face logs
-  milliseconds per draw, which is the number that matters.
+- Speed on the watch itself. On this host a watch draw (four 7800 frames, one
+  of them shown) of the clock stub costs 2.3-2.9 million x86 instructions
+  depending on the show (callgrind, `-Os`); the watch face logs milliseconds
+  per draw, which is the number that matters.
 
 Input clips (`.inp` recordings replayed on the watch) were dropped: a watch face
 receives no buttons or touch, so a cartridge plays its own animation, keyed to

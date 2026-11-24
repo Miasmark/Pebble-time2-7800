@@ -27,10 +27,16 @@ planes or landers. The show is the hour's plus CLK_CHANNEL, which the watch
 moves on at each wrist flick; whenever the show changes (a flick, the top of
 the hour, power-on) the picture goes to 0.4 s of TV static first.
 
+Each show has a backdrop -- deep space, earth, farmland, the moon: a
+background colour, palette 7 and a list of items drawn first in each zone. The
+stars and the farmland move and are rebuilt every frame; the still ones are
+built once into each set of lists and kept at their heads.
+
 Within a second it counts frames, starting again whenever the seconds register
 changes, so it cannot drift from the watch's clock. Real MARIA display lists
-are rebuilt every frame in vertical blank, from 160A graphics in ROM laid out
-line-planar for 16-line zones. Things that move up and down are placed to the
+are built a frame ahead, in two sets that take turns (the display list list
+and the colours switch over in vertical blank), from 160A graphics in ROM laid
+out line-planar for 16-line zones. Things that move up and down are placed to the
 line by splitting them over two zones with shifted graphics pointers, and holey
 DMA (on in every zone) blanks the pages either side of the graphics -- the way
 7800 games position sprites vertically. Assembled with the a7800 toolkit's
@@ -50,6 +56,7 @@ GFX = 0xE000           # 16 pages: page $E0 + (15 - line) holds line `line` of e
 TABLES = 0xF000        # the display list list and tables
 DL_ZONES = 16          # 16 x 16 lines covers every DMA line (17-258)
 DLBASE = 0x1900        # 64 bytes (15 entries) per zone's display list: $1900-$1CFF
+DLBASE_B = 0x2200      # the second set, for zones 1-11: built while the first is shown
 DL_STRIDE = 64
 HUD_ZONE = 12          # lines 210-225 (watch rows 168-183)
 MAP1, MAP2 = 0x1D00, 0x1D10    # character maps for the bar's two entries
@@ -175,6 +182,152 @@ DUST = [   # palette 5; starts 10 lines down
     "1111111111111111",
 ]
 
+# the backdrops, palette 7 unless noted (each show sets its own palette 7)
+ROOTS = [  # drill: dark red-brown, tan
+    ".2.....2....2...",
+    ".2....22....2...",
+    ".22...2....22...",
+    "..2...2....2....",
+    "..2..22....2....",
+    "..21.2.....21...",
+    "...2.2......2...",
+    "...2.1......2...",
+    "...1........1...",
+    "...1........1...",
+]
+PEBBLES = [  # drill: grey stones shaded tan
+    "................",
+    "..33............",
+    ".3332.......3...",
+    ".2322......332..",
+    "..22........2...",
+    "................",
+    "........33......",
+    ".......3332.....",
+    ".......2222.....",
+    "........22......",
+    "................",
+    "...3............",
+    "..322...........",
+    "...2..........3.",
+    "..............2.",
+]
+FOSSIL = [  # drill: an ammonite
+    "................",
+    ".....222222.....",
+    "...2233333322...",
+    "..233222222332..",
+    ".23322333322332.",
+    ".23223322233232.",
+    ".23232322323232.",
+    ".23232332323232.",
+    ".23223222332232.",
+    ".2332233332232..",
+    "..233222222332..",
+    "...2233333322...",
+    ".....222222.....",
+]
+TREES = [  # bomber, from above: green
+    "................",
+    "...11.....11....",
+    "..1111...1111...",
+    "..1111...1111...",
+    "...11.....11....",
+    "......11........",
+    ".....1111.......",
+    ".....1111.......",
+    "......11........",
+]
+FIELD = [  # bomber: furrows
+    "2222222222222222",
+    "................",
+    "2222222222222222",
+    "................",
+    "2222222222222222",
+    "................",
+    "2222222222222222",
+    "................",
+    "2222222222222222",
+    "................",
+    "2222222222222222",
+]
+HOUSE = [  # bomber: a red roof and its ridge, a tree beside it
+    "................",
+    "...33333333.....",
+    "...33333333..11.",
+    "...22222222.1111",
+    "...33333333.1111",
+    "...33333333..11.",
+]
+EARTH = [  # lander: blue, green, white
+    ".....111111.....",
+    "...1111221111...",
+    "..112222211111..",
+    ".11122221111311.",
+    ".11112211113331.",
+    "1111112111133311",
+    "1111111111111111",
+    "1133111122211111",
+    "1333111222221111",
+    "1131111222221111",
+    ".11111112221111.",
+    ".11111111211111.",
+    "..113311111111..",
+    "...1133311111...",
+    ".....111111.....",
+]
+SPARK = ["...", ".3.", "333", ".3."][1:]   # lander: a bright star, one byte wide
+
+
+def strata_tile():
+    """80 x 16, repeating every 80 pixels: a wavy dark vein (colour 1) over a tan
+    band two lines deep, all in the top 8 lines -- placed 8 lines down a zone, so
+    holey DMA skips the other 8."""
+    lines = [[0] * 80 for _ in range(16)]
+    for x in range(80):
+        y = 3 + int(round(1.5 * math.sin(x * 2 * math.pi / 80) + 0.6 * math.sin(x * 6 * math.pi / 80)))
+        lines[y][x] = 1
+        lines[y + 1][x] = 2
+        if (x // 4) % 4:
+            lines[y + 2][x] = 2
+        if x % 11 == 3 and y + 3 < 8:
+            lines[y + 3][x] = 2
+        if x % 17 == 9:
+            lines[y - 1][x] = 1
+    return lines
+
+
+def moon_tile():
+    """80 x 16, palette 5 greys, repeating every 80 pixels: the lunar ground, a
+    hilly horizon at the top and craters in it, in the top 12 lines (placed 4
+    lines down zone 11)."""
+    lines = [[0] * 80 for _ in range(16)]
+    top = [3 + int(round(1.6 * math.sin(x * 2 * math.pi / 80) + 0.8 * math.sin(x * 6 * math.pi / 80)))
+           for x in range(80)]
+    for x in range(80):
+        lines[top[x]][x] = 3                       # sunlit rim
+        for y in range(top[x] + 1, 12):
+            lines[y][x] = 2
+    for cx, cy, rx, ry in ((14, 7, 6, 2), (47, 8, 8, 2), (66, 6, 4, 1), (30, 9, 3, 1)):
+        for x in range(cx - rx, cx + rx + 1):
+            for y in range(cy - ry, cy + ry + 1):
+                if ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1.0:
+                    lines[y][x % 80] = 1
+            yb = cy + ry + 1                       # lit far wall
+            if yb < 12 and abs(x - cx) < rx:
+                lines[yb][x % 80] = 3
+    seed = 4
+    for _ in range(30):
+        seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+        x = (seed >> 8) % 80
+        y = 6 + (seed >> 16) % 6
+        if lines[y][x] == 2:
+            lines[y][x] = 1 if seed & 1 else 3
+    return lines
+
+
+WIDE = [("STRATA", strata_tile()), ("MOON", moon_tile())]   # 20 bytes a line
+
 GLYPHS = []      # (name, 16 lines x 16 pixels)
 
 
@@ -267,6 +420,53 @@ def star_table():
 
 STARS = star_table()
 
+# palette | width bytes for display list entries
+PW_STAR = 0xFF            # palette 7, 1 byte
+PW_P7 = 0xFC              # palette 7, 4 bytes (a 16-pixel glyph)
+PW_WIDE7 = 0xEC           # palette 7, 20 bytes (a wide tile)
+PW_WIDE5 = 0xAC           # palette 5, 20 bytes
+
+# layers: 0-2 the stars, 3 still, 4 the bomber's ground
+L_STILL, L_GROUND = 3, 4
+
+
+def bomber_ground():
+    seed, out, kinds = 2026, [], ["FIELD", "TREES", "FIELD", "TREES", "HOUSE"]
+    for i in range(18):
+        seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+        x = 4 + ((i * 53 + (seed >> 10) % 40) % 140)
+        out.append((x, i * 14 + (seed >> 20) % 6, L_GROUND, kinds[i % 5], PW_P7))
+    return out
+
+
+# per show: (the first line it may use, items (x, line, layer, glyph or wide tile, pw))
+BACKDROPS = [
+    (16, [(x, y, l, "STAR%d" % l, PW_STAR) for x, y, l in STARS]),
+    (80, [(4, 80, L_STILL, "ROOTS", PW_P7), (140, 80, L_STILL, "ROOTS", PW_P7),
+          (0, 120, L_STILL, "STRATA", PW_WIDE7), (80, 120, L_STILL, "STRATA", PW_WIDE7),
+          (0, 152, L_STILL, "STRATA", PW_WIDE7), (80, 152, L_STILL, "STRATA", PW_WIDE7),
+          (144, 98, L_STILL, "PEBBLES", PW_P7), (8, 129, L_STILL, "PEBBLES", PW_P7),
+          (70, 132, L_STILL, "PEBBLES", PW_P7), (112, 164, L_STILL, "PEBBLES", PW_P7),
+          (24, 160, L_STILL, "PEBBLES", PW_P7), (128, 126, L_STILL, "FOSSIL", PW_P7)]),
+    (80, bomber_ground()),
+    (16, [(8, 104, L_STILL, "EARTH", PW_P7),
+          (0, 180, L_STILL, "MOON", PW_WIDE5), (80, 180, L_STILL, "MOON", PW_WIDE5)] +
+         [(x, y, L_STILL, g, PW_STAR) for x, y, g in (
+             (6, 22, "SPARK"), (150, 30, "STAR0"), (40, 60, "STAR0"), (132, 84, "SPARK"),
+             (150, 104, "STAR0"), (60, 118, "SPARK"), (100, 128, "STAR0"), (138, 140, "SPARK"),
+             (30, 140, "STAR0"), (84, 152, "STAR0"), (12, 164, "SPARK"), (146, 166, "STAR0"))]),
+]
+
+# per show: BACKGRND, palette 5, palette 6, palette 7. The watch has 64 colours,
+# so check that the ones that must differ still do through its table
+# (palette7800.c): $12 and $14, say, both come out dark olive
+SHOW_COLOURS = [
+    (0x00, 0x22, 0x24, 0x06, 0x14, 0x1A, 0x18, 0x86, 0x0A, 0x0F),   # formation: space
+    (0x12, 0x22, 0x24, 0x06, 0x14, 0x1A, 0x18, 0x32, 0x24, 0x0A),   # drill: under ground
+    (0xC2, 0x22, 0x24, 0x06, 0x14, 0x1A, 0x18, 0xD4, 0xF8, 0x34),   # bomber: farmland
+    (0x00, 0x04, 0x08, 0x0E, 0x14, 0x1A, 0x18, 0x84, 0xC8, 0x0F),   # lander: the moon
+]
+
 
 def build_glyphs():
     g = [("D%d" % d, glyph_lines(rows)) for d, rows in enumerate(BIG_DIGITS)]
@@ -278,6 +478,9 @@ def build_glyphs():
           ("DUNE", picture(DUNE, 5)), ("LANDER", picture(LANDER)), ("FLAME0", picture(FLAME[0])),
           ("FLAME1", picture(FLAME[1])), ("DUST", picture(DUST, 10))]
     g += [("STAR%d" % k, star_lines(k)) for k in range(3)]
+    g += [("ROOTS", picture(ROOTS)), ("PEBBLES", picture(PEBBLES)), ("FOSSIL", picture(FOSSIL)),
+          ("TREES", picture(TREES)), ("FIELD", picture(FIELD)), ("HOUSE", picture(HOUSE)),
+          ("EARTH", picture(EARTH)), ("SPARK", picture(SPARK))]
     return g
 
 
@@ -415,12 +618,26 @@ SCRL     = $00AB
 CARRY    = $00AC
 MOFF     = $00AD     ; added to the minutes' x (a shake)
 FRAMEH   = $00AE     ; FRAME's high byte, for the stars' slow layers
-SOFF     = $00AF     ; and $B0, $B1: how far each layer of stars has fallen
-SIDX     = $00B2
+SIDX     = $00AF
+SOFF     = $00CA     ; $CA-$CE: how far each backdrop layer has moved: the stars'
+                     ; three, still (always 0), and the bomber's ground
 LASTSCENE = $00B3    ; the show last frame, $FF at power-on
 STATIC   = $00B4     ; frames of channel-change static still to show
 RND      = $00B5     ; the static's random bytes (an 8-bit LFSR, never 0)
 STATIC_FRAMES = $18  ; 24 frames, 0.4 s
+BUILDHI  = $00B6     ; 0 while building the first set of lists, $09 the second
+NEXT_DPPL = $00B7    ; the display list list for the lists being built
+NEXT_DPPH = $00B8
+BDI      = $00B9     ; backdrop: the next item
+BDEND    = $00BA
+BDMIN    = $00BB     ; the first line it may use
+BDVALID  = $00BC     ; and $BD: the show whose still backdrop each set of lists
+                     ; already holds ($FF: none)
+BSET     = $00BE     ; the set being built: 0 or 1
+BDBASE   = $1D20     ; backdrop entries at the head of each zone's list: $1D20-$1D2F
+                     ; for the first set, $1D30-$1D3F for the second
+SHADOW   = $00C0     ; $C0-$C9: BACKGRND, P5, P6, P7 for the frame being built,
+                     ; written in vertical blank as its lists go up
 """
 
 CODE_ASM = """
@@ -451,24 +668,6 @@ reset:
     STA P3C2                  ; yellow
     LDA #$0E
     STA P3C3                  ; white
-    LDA #$22
-    STA P5C1                  ; rock: dark brown
-    LDA #$24
-    STA P5C2                  ; tan
-    LDA #$06
-    STA P5C3                  ; grey
-    LDA #$14
-    STA P6C1                  ; dunes: olive
-    LDA #$1A
-    STA P6C2                  ; gold
-    LDA #$18
-    STA P6C3                  ; sand
-    LDA #$86
-    STA P7C1                  ; stars: dim blue
-    LDA #$0A
-    STA P7C2                  ; grey
-    LDA #$0F
-    STA P7C3                  ; white (the watch puts palette 7 behind its banner)
     LDA #$00
     TAX
 clear:
@@ -476,8 +675,22 @@ clear:
     STA DLBASE+$100,X
     STA DLBASE+$200,X
     STA DLBASE+$300,X
+    STA DLBASE_B,X
+    STA DLBASE_B+$100,X
+    STA DLBASE_B+$200,X
+    STA DLBASE_B+$300,X
     INX
     BNE clear
+    STA BUILDHI
+    LDA #$FF
+    STA BDVALID
+    STA BDVALID+1
+    LDA #$00
+    LDX #$0E
+clear_shadow:
+    STA SHADOW,X              ; the first frame's colours: black (and SOFF)
+    DEX
+    BPL clear_shadow
     STA FRAME
     STA FRAMEH
     STA SUBF
@@ -507,17 +720,47 @@ hud_list:
     STA P4C3                  ; yellow score
     LDA CLK_SEC
     STA LASTSEC
-    LDA #>dll
-    STA DPPH
-    LDA #<dll
-    STA DPPL
+    LDA #>dll_a
+    STA NEXT_DPPH
+    LDA #<dll_a
+    STA NEXT_DPPL
     LDA #$40                  ; DMA on, 160A
     STA CTRL
 
 main:
 wait_vb:
     LDA MSTAT
-    BPL wait_vb               ; everything below happens in vertical blank
+    BPL wait_vb
+
+    ; ---- the lists built last frame go up, with their colours; this frame's
+    ; are built in the other set while they are shown ----
+    LDA NEXT_DPPH
+    STA DPPH
+    LDA NEXT_DPPL
+    STA DPPL
+    LDA SHADOW
+    STA BACKGRND
+    LDA SHADOW+1
+    STA P5C1
+    LDA SHADOW+2
+    STA P5C2
+    LDA SHADOW+3
+    STA P5C3
+    LDA SHADOW+4
+    STA P6C1
+    LDA SHADOW+5
+    STA P6C2
+    LDA SHADOW+6
+    STA P6C3
+    LDA SHADOW+7
+    STA P7C1
+    LDA SHADOW+8
+    STA P7C2
+    LDA SHADOW+9
+    STA P7C3
+    LDA BUILDHI
+    EOR #$09
+    STA BUILDHI
 
     ; ---- where are we in the minute? the seconds register is the clock ----
     LDA CLK_SEC
@@ -572,62 +815,123 @@ local_ok:
     LDA #STATIC_FRAMES
     STA STATIC
 same_show:
+    LDX SCENE                 ; this show's colours
+    LDY times10,X
+    LDX #$00
+copy_shadow:
+    LDA show_colours,Y
+    STA SHADOW,X
+    INY
+    INX
+    CPX #$0A
+    BNE copy_shadow
+    LDX #$00                  ; which display list list: first set or second...
+    LDA BUILDHI
+    BEQ dll_pick
+    INX
+dll_pick:
     LDA STATIC
-    BEQ picture_dll
-    LDA #>dll_static
-    STA DPPH
-    LDA #<dll_static
-    STA DPPL
-    LDA #$06                  ; palette 6 turns to the static's greys
-    STA P6C1
+    BEQ dll_picked
+    INX                       ; ... and holey DMA off for the static
+    INX
+    LDA #$00
+    STA SHADOW                ; black behind it, palette 6 its greys
+    LDA #$06
+    STA SHADOW+4
     LDA #$0A
-    STA P6C2
+    STA SHADOW+5
     LDA #$0F
-    STA P6C3
-    JMP dll_set
-picture_dll:
-    LDA #>dll
-    STA DPPH
-    LDA #<dll
-    STA DPPL
-    LDA #$14
-    STA P6C1                  ; dunes: olive
-    LDA #$1A
-    STA P6C2                  ; gold
-    LDA #$18
-    STA P6C3                  ; sand
-dll_set:
+    STA SHADOW+6
+dll_picked:
+    LDA dll_lo,X
+    STA NEXT_DPPL
+    LDA dll_hi,X
+    STA NEXT_DPPH
     LDA CLK_MIN
     JSR bcd_to_bin
     STA MINB
     LDA #$00
     STA MOFF
 
-    ; ---- empty the lists of zones 1-11 ----
-    LDX #$01
-empty:
-    LDA #$00
-    STA ZCNT,X
-    JSR set_ptr
-    LDY #$01
-    LDA #$00
-    STA (PTR),Y
+    LDX #$00                  ; which set: 0 or 1
+    LDA BUILDHI
+    BEQ bset_ok
     INX
-    CPX #$0C
-    BNE empty
+bset_ok:
+    STX BSET
 
     LDA STATIC
     BEQ picture_on
+    LDA #$FF                  ; the static overwrites any backdrop
+    STA BDVALID
+    STA BDVALID+1
+    JSR empty_lists
     DEC STATIC
     JSR draw_static
     JMP the_bar
 picture_on:
 
-    ; ---- the formation hour flies through stars, behind everything else ----
-    LDA SCENE
-    BNE no_stars
-    JSR stars
-no_stars:
+    ; ---- the show's backdrop, behind everything else: rebuilt every frame if
+    ; it moves; if it is still, kept at the head of each list once built ----
+    LDX SCENE
+    LDA bd_moving,X
+    BNE bd_rebuild
+    LDX BSET
+    LDA BDVALID,X
+    CMP SCENE
+    BEQ bd_keep
+bd_rebuild:
+    JSR empty_lists
+    JSR backdrop
+    LDA BSET                  ; note how many entries it left in each zone
+    ASL
+    ASL
+    ASL
+    ASL
+    TAY
+    LDX #$01
+bd_note:
+    LDA ZCNT,X
+    STA BDBASE+1,Y
+    INY
+    INX
+    CPX #$0C
+    BNE bd_note
+    LDX SCENE
+    LDA bd_moving,X
+    BEQ bd_still
+    LDA #$FF
+    BNE bd_valid
+bd_still:
+    TXA
+bd_valid:
+    LDX BSET
+    STA BDVALID,X
+    JMP bd_ready
+bd_keep:
+    LDA BSET                  ; cut each list back to its backdrop
+    ASL
+    ASL
+    ASL
+    ASL
+    STA TMP3
+    LDX #$01
+bd_cut:
+    LDY TMP3
+    LDA BDBASE+1,Y
+    INC TMP3
+    STA ZCNT,X
+    ASL
+    ASL
+    TAY
+    INY
+    JSR set_ptr
+    LDA #$00
+    STA (PTR),Y
+    INX
+    CPX #$0C
+    BNE bd_cut
+bd_ready:
 
     ; ---- the hours and the colon, palette 0 ----
     LDA #$1C                  ; palette 0, 4 bytes wide
@@ -936,22 +1240,7 @@ dr_done:
 ; hour 2: bomber run
 ; ======================================================================
 scene_bomber:
-    LDA STAGE                 ; the ground scrolls half a line a frame during the show
-    CMP #$FF
-    BEQ bm_still
-    TAX
-    LDA times30,X
-    STA TMP2
-    LDA SUBF
-    LSR
-    CLC
-    ADC TMP2
-    JMP bm_scroll
-bm_still:
-    LDA #$00
-bm_scroll:
-    STA SCRL
-    LDY #$00
+    LDY #$00                  ; the ground (SCRL is set by the backdrop)
 bm_ground:
     LDA terr_phase,Y
     CLC
@@ -1208,54 +1497,74 @@ ld_done:
 ; helpers
 ; ======================================================================
 
-; the star field: three layers falling at 1/8, 1/4 and 1/2 a line a frame (the
-; frame count, not the clock: they are scenery, and the count never jumps). The
-; lists are empty when this runs, so the stars go first and everything else is
-; drawn over them. Inline rather than add_obj_hi: 24 stars every frame add up.
-stars:
+; the show's backdrop: a list of items (bd_*), each on one of five layers --
+; the formation hour's stars falling at 1/8, 1/4 and 1/2 a line a frame (by the
+; frame count: they are scenery, and the count never jumps), still, or moving
+; with the bomber's ground. The lists are empty when this runs, so everything
+; else is drawn over it.
+backdrop:
     LDA FRAMEH
     STA TMP2
     LDA FRAME
     LSR TMP2
     ROR A
-    STA SOFF+2                ; near: frames / 2
+    STA SOFF+2                ; near stars: frames / 2
     LSR TMP2
     ROR A
     STA SOFF+1                ; middle: frames / 4
     LSR TMP2
     ROR A
     STA SOFF                  ; far: frames / 8
-    LDY #N_STARS-1
-star_loop:
-    LDX star_l,Y
-    LDA star_y,Y
+    LDA #$00
+    STA SOFF+3                ; still
+    JSR calc_scrl
+    STA SOFF+4                ; the ground
+    LDX SCENE
+    LDA bd_ymin,X
+    STA BDMIN
+    LDA bd_first,X
+    STA BDI
+    LDA bd_first+1,X
+    STA BDEND
+bd_loop:
+    LDY BDI
+    CPY BDEND
+    BEQ bd_done
+    INC BDI
+    LDX bd_l,Y
+    LDA bd_y,Y
     CLC
     ADC SOFF,X
-    TAX                       ; the star's line, counting from zone 0's top
+    CMP BDMIN
+    BCC bd_loop               ; above where this show's backdrop starts
+    TAX                       ; the item's line, counting from zone 0's top
     LDA zone_of,X
-    BMI star_next             ; not in zones 1-11
+    BMI bd_loop               ; not in zones 1-11
     STA TMP3
     LDA page_of,X             ; $E0 + the line within the zone
     STA TMP_HI
     LDX TMP3
     LDA ZCNT,X
     CMP #$0F
-    BCS star_next
+    BCS bd_loop
     INC ZCNT,X
     ASL
     ASL
     ORA zlo,X                 ; lists are 64-byte aligned
     STA PTR
     LDA zhi,X
+    CLC
+    ADC BUILDHI
     STA PTR+1
-    LDA star_x,Y
+    LDA bd_x,Y
     STA TMP_X
-    LDA star_g,Y
-    STY SIDX
+    LDA bd_pw,Y
+    STA TMP_PAL
+    LDA bd_g,Y
     LDY #$00
     STA (PTR),Y
     INY
-    LDA #$FF                  ; palette 7, one byte wide
+    LDA TMP_PAL
     STA (PTR),Y
     INY
     LDA TMP_HI
@@ -1267,10 +1576,43 @@ star_loop:
     INY
     LDA #$00                  ; the end of the list
     STA (PTR),Y
-    LDY SIDX
-star_next:
-    DEY
-    BPL star_loop
+    JMP bd_loop
+bd_done:
+    RTS
+
+; empty the lists of zones 1-11 in the set being built
+empty_lists:
+    LDX #$01
+empty:
+    LDA #$00
+    STA ZCNT,X
+    JSR set_ptr
+    LDY #$01
+    LDA #$00
+    STA (PTR),Y
+    INX
+    CPX #$0C
+    BNE empty
+    RTS
+
+; SCRL: how far the bomber's ground has scrolled -- half a line a frame
+; during the show, by the clock
+calc_scrl:
+    LDA STAGE
+    CMP #$FF
+    BEQ scrl_still
+    TAX
+    LDA times30,X
+    STA TMP2
+    LDA SUBF
+    LSR
+    CLC
+    ADC TMP2
+    STA SCRL
+    RTS
+scrl_still:
+    LDA #$00
+    STA SCRL
     RTS
 
 ; channel-change static: two 80-pixel entries a zone over 4K of random bytes,
@@ -1327,6 +1669,8 @@ set_ptr:
     LDA zlo,X
     STA PTR
     LDA zhi,X
+    CLC
+    ADC BUILDHI               ; the set being built
     STA PTR+1
     RTS
 
@@ -1551,10 +1895,14 @@ nmi:
 SHOOTER = "    ; ---- the minutes: palette 2, or from :59.5 the blast in palette 3 ----\n    LDA STAGE\n    CMP #$02\n    BNE minute_digits\n    LDA SUBF\n    CMP #$1E\n    BCC minute_digits\n    LDA #$7C                  ; palette 3\n    STA TMP_PAL\n    JSR draw_blast\n    JMP minutes_done\nminute_digits:\n    LDA #$5C                  ; palette 2 (and x = 92, as it happens)\n    STA TMP_PAL\n    STA TMP_X\n    LDA CLK_MIN\n    LSR\n    LSR\n    LSR\n    LSR\n    JSR add_obj\n    LDA #$70\n    STA TMP_X\n    LDA CLK_MIN\n    AND #$0F\n    JSR add_obj\nminutes_done:\n\n    ; ---- colours: a hit flashes the minutes white; :00 fades the new one in ----\n    LDA STAGE\n    CMP #$01\n    BEQ maybe_hit\n    CMP #$02\n    BNE no_hit\n    LDA SUBF\n    CMP #$1E\n    BCS no_hit\nmaybe_hit:\n    LDA LOCAL\n    CMP #$0C\n    BCC no_hit\n    CMP #$10\n    BCS no_hit\n    LDA #$0E\n    STA P2C1\n    STA P2C2\n    STA P2C3\nno_hit:\n    JSR fade_minutes\n\n    ; ---- the two attackers, zone 9 ----\n    LDA STAGE\n    CMP #$FF\n    BNE ships_on\n    JMP ships_done\nships_on:\n    CMP #$00\n    BNE not_arriving\n    LDA SUBF                  ; :57 -- A from the left to 92, B from the right to 112\n    CMP #$36\n    BCS a_there\n    ASL\n    SEC\n    SBC #$10\n    JMP a_set\na_there:\n    LDA #$5C\na_set:\n    STA SHIPA\n    LDA SUBF\n    CMP #$20\n    BCS b_there\n    ASL\n    STA TMP_G\n    LDA #$B0\n    SEC\n    SBC TMP_G\n    JMP b_set\nb_there:\n    LDA #$70\nb_set:\n    STA SHIPB\n    JMP place_ships\nnot_arriving:\n    CMP #$05\n    BNE on_station\n    LDA SUBF                  ; :02 -- they leave the way they came\n    ASL\n    STA TMP_G\n    LDA #$5C\n    SEC\n    SBC TMP_G\n    STA SHIPA\n    LDA #$70\n    CLC\n    ADC TMP_G\n    STA SHIPB\n    JMP place_ships\non_station:\n    LDA #$5C\n    STA SHIPA\n    LDA #$70\n    STA SHIPB\nplace_ships:\n    LDA #$3C                  ; palette 1\n    STA TMP_PAL\n    LDX #$09\n    LDA SHIPA\n    STA TMP_X\n    LDA #$0B\n    JSR add_obj\n    LDA SHIPB\n    STA TMP_X\n    LDA #$0B\n    JSR add_obj\n\n    ; ---- their shots: :58 and the first half of :59 ----\n    LDA STAGE\n    CMP #$01\n    BEQ shots_maybe\n    CMP #$02\n    BNE ships_done\n    LDA SUBF\n    CMP #$1E\n    BCS ships_done\nshots_maybe:\n    LDA LOCAL\n    CMP #$0C\n    BCS ships_done\n    ASL                       ; 4 lines a frame\n    ASL\n    STA TMP_G\n    LDA #$2C                  ; y = 44 - 4 * LOCAL, lines below the top of zone 6\n    SEC\n    SBC TMP_G\n    STA SHOTY\n    LSR\n    LSR\n    AND #$03\n    CLC\n    ADC #$0C                  ; the copy shifted to y's 4-line step\n    STA BOOM\n    LDA SHOTY\n    LSR\n    LSR\n    LSR\n    LSR\n    CLC\n    ADC #$06\n    TAX                       ; zone 6, 7 or 8\n    LDA #$7C\n    STA TMP_PAL\n    LDA SHIPA\n    STA TMP_X\n    LDA BOOM\n    JSR add_obj\n    LDA SHIPB\n    STA TMP_X\n    LDA BOOM\n    JSR add_obj\nships_done:\n"
 
 
+WIDE_BASE = CH_SPACE + len(small_chars())   # the wide tiles, after the characters
+
+
 def source():
     L = [ln for ln in ASM.strip().splitlines()]
     a = L.append
     a("DLBASE   = $%04X" % DLBASE)
+    a("DLBASE_B = $%04X" % DLBASE_B)
     a("HUD_DL   = $%04X" % (DLBASE + HUD_ZONE * DL_STRIDE))
     a("MAP1     = $%04X" % MAP1)
     a("MAP2     = $%04X" % MAP2)
@@ -1562,6 +1910,8 @@ def source():
         a("G_%-8s= $%02X" % (name, i))
     for i, (name, _) in enumerate(small_chars()):
         a("CH_%-6s= $%02X" % (name, CH_SPACE + i))
+    for i, (name, _) in enumerate(WIDE):
+        a("W_%-7s= $%02X" % (name, WIDE_BASE + 20 * i))
     a("")
     a("    .org $%04X" % ROM_BASE)
     a(CODE_ASM.strip().replace("SHOOTER_CODE", SHOOTER.rstrip("\n")))
@@ -1584,18 +1934,50 @@ def source():
         for _, ch in small_chars():
             px = ch[line]
             data.append((px[0] << 6) | (px[1] << 4) | (px[2] << 2) | px[3])
+        for _, w in WIDE:
+            for b in range(0, 80, 4):
+                data.append((w[line][b] << 6) | (w[line][b + 1] << 4) | (w[line][b + 2] << 2) | w[line][b + 3])
         assert len(data) <= 256
         a("    .byte " + ",".join("$%02X" % b for b in data))
         a("    .res $%X,$00" % (256 - len(data)))
     a("")
-    a("dll:                  ; every zone 16 lines, holey DMA for 16-line zones on")
-    for z in range(DL_ZONES):
-        dl = DLBASE + z * DL_STRIDE
-        a("    .byte $4F,$%02X,$%02X" % (dl >> 8, dl & 0xFF))
-    a("dll_static:           ; the same zones with holey DMA off, for the static")
-    for z in range(DL_ZONES):
-        dl = DLBASE + z * DL_STRIDE
-        a("    .byte $0F,$%02X,$%02X" % (dl >> 8, dl & 0xFF))
+    # four display list lists: zones 1-11 in the first or second set of lists,
+    # each with holey DMA for 16-line zones on, or off (for the static)
+    for name, second, head in (("dll_a", False, 0x4F), ("dll_b", True, 0x4F),
+                               ("dlls_a", False, 0x0F), ("dlls_b", True, 0x0F)):
+        a("%s:" % name)
+        for z in range(DL_ZONES):
+            dl = (DLBASE_B if second and 1 <= z <= 11 else DLBASE) + z * DL_STRIDE
+            a("    .byte $%02X,$%02X,$%02X" % (head, dl >> 8, dl & 0xFF))
+    a("dll_lo:")
+    a("    .byte <dll_a,<dll_b,<dlls_a,<dlls_b")
+    a("dll_hi:")
+    a("    .byte >dll_a,>dll_b,>dlls_a,>dlls_b")
+    a("times10:")
+    a("    .byte 0,10,20,30")
+    a("show_colours:          ; BACKGRND, P5C1-3, P6C1-3, P7C1-3 for each show")
+    for c in SHOW_COLOURS:
+        a("    .byte " + ",".join("$%02X" % v for v in c))
+    items, first = [], []
+    for ymin, its in BACKDROPS:
+        first.append(len(items))
+        items += its
+    first.append(len(items))
+    names = [n for n, _ in GLYPHS]
+    wides = [n for n, _ in WIDE]
+    def lo(g):
+        return names.index(g) * 4 if g in names else WIDE_BASE + 20 * wides.index(g)
+    a("bd_moving:            ; 1: the backdrop moves, so it is rebuilt every frame")
+    a("    .byte " + ",".join("$%02X" % int(any(t[2] != L_STILL for t in its)) for _, its in BACKDROPS))
+    a("bd_ymin:")
+    a("    .byte " + ",".join("$%02X" % b[0] for b in BACKDROPS))
+    a("bd_first:")
+    a("    .byte " + ",".join("$%02X" % f for f in first))
+    for nm, fn in (("bd_x", lambda t: t[0]), ("bd_y", lambda t: t[1] & 0xFF), ("bd_l", lambda t: t[2]),
+                   ("bd_g", lambda t: lo(t[3])), ("bd_pw", lambda t: t[4])):
+        a("%s:" % nm)
+        for k in range(0, len(items), 16):
+            a("    .byte " + ",".join("$%02X" % fn(t) for t in items[k:k + 16]))
     a("zlo:")
     a("    .byte " + ",".join("$%02X" % ((DLBASE + z * DL_STRIDE) & 0xFF) for z in range(DL_ZONES)))
     a("zhi:")
@@ -1620,16 +2002,6 @@ def source():
     a("    .byte " + ",".join("G_%s" % t[2] for t in TERRAIN))
     a("terr_pal:")
     a("    .byte " + ",".join("$%02X" % t[3] for t in TERRAIN))
-    a("N_STARS = %d" % len(STARS))
-    a("star_x:")
-    a("    .byte " + ",".join("$%02X" % t[0] for t in STARS))
-    a("star_y:")
-    a("    .byte " + ",".join("$%02X" % t[1] for t in STARS))
-    a("star_l:")
-    a("    .byte " + ",".join("$%02X" % t[2] for t in STARS))
-    a("star_g:               ; glyph * 4, as a display list entry's low byte")
-    star0 = [n for n, _ in GLYPHS].index("STAR0")
-    a("    .byte " + ",".join("$%02X" % ((star0 + t[2]) * 4) for t in STARS))
     a("zone_of:              ; line -> zone, $FF outside zones 1-11")
     for r in range(0, 256, 32):
         a("    .byte " + ",".join("$%02X" % (y >> 4 if 16 <= y < 192 else 0xFF) for y in range(r, r + 32)))

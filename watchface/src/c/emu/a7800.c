@@ -251,10 +251,21 @@ static bool is_holey(const A7800 *m, uint16_t addr) {
   return ((m->holey & 2) && (addr & 0x9000) == 0x9000) || ((m->holey & 1) && (addr & 0x8800) == 0x8800);
 }
 
-static int write_line_ram(A7800 *m, uint16_t addr, uint8_t hpos, uint8_t pal) {
-  uint8_t data = dma_peek(m, addr);
+static int write_line_data(A7800 *m, uint8_t data, uint8_t hpos, uint8_t pal) {
+  if (!data && !m->kangaroo) {
+    return m->write_mode ? 2 : 4;   // all transparent: nothing to write
+  }
   uint8_t *buf = m->line_ram[m->active];
   pal = (uint8_t)(pal << 2);
+  if (!m->write_mode && !m->kangaroo && hpos <= A7800_WIDTH - 4) {
+    // 160A, all four on the line: the common case, unrolled
+    uint8_t c;
+    if ((c = data >> 6)) buf[hpos] = (uint8_t)(pal | c);
+    if ((c = (data >> 4) & 3)) buf[hpos + 1] = (uint8_t)(pal | c);
+    if ((c = (data >> 2) & 3)) buf[hpos + 2] = (uint8_t)(pal | c);
+    if ((c = data & 3)) buf[hpos + 3] = (uint8_t)(pal | c);
+    return 4;
+  }
   if (m->write_mode) {
     // 160B: two pixels, each with its own palette bits (P2 from the entry)
     uint8_t c = (uint8_t)((pal & 0x10) | (data & 0x0C) | (data >> 6));
@@ -269,6 +280,10 @@ static int write_line_ram(A7800 *m, uint16_t addr, uint8_t hpos, uint8_t pal) {
     if (((c & 3) || m->kangaroo) && hpos < A7800_WIDTH) buf[hpos] = c;
   }
   return 4;
+}
+
+static int write_line_ram(A7800 *m, uint16_t addr, uint8_t hpos, uint8_t pal) {
+  return write_line_data(m, dma_peek(m, addr), hpos, pal);
 }
 
 // Returns the MARIA clocks the line's DMA took, or 0 with DMA off.
@@ -306,6 +321,8 @@ static int draw_scanline(A7800 *m) {
     }
 
     bool hole_charged = false;
+    bool page_hole = false;          // holey DMA and the page table go by the high
+    const uint8_t *page = NULL;      // byte: look them up once a page
     for (int x = 0; x < width; x++) {
       if (mc >= DMALIMIT) {
         break;
@@ -328,12 +345,19 @@ static int draw_scanline(A7800 *m) {
         }
       } else {
         uint16_t data_addr = (uint16_t)(gfx + x + (m->offset << 8));
-        if (is_holey(m, data_addr)) {
+        if (x == 0 || (data_addr & 0xFF) == 0) {
+          page_hole = is_holey(m, data_addr);
+          page = m->cpu.rd_page[data_addr >> 8];
+        }
+        if (page_hole) {
           if (!hole_charged) mc += 3;
           hole_charged = true;
+          // the rest of the entry on this page is a hole too: skip to the next page
+          x += 0xFF - (data_addr & 0xFF);
           continue;
         }
-        hpos = (uint8_t)(hpos + write_line_ram(m, data_addr, hpos, pal));
+        uint8_t data = page ? page[data_addr & 0xFF] : dma_peek(m, data_addr);
+        hpos = (uint8_t)(hpos + write_line_data(m, data, hpos, pal));
         mc += 3;
       }
     }
