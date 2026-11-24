@@ -19,7 +19,7 @@ The show is picked by the hour and the channel (see below).
 |---|---|---|
 | 0 | **Formation**: two attackers fly in and fire three volleys, the old minute explodes and the new one fades in | deep space, with a three-layer star field falling behind ([closer look](docs/starfield.gif)) |
 | 1 | **Drill rig**: a rig bores up through the rock (chips falling, a dark shaft opening behind it), the old minute shakes and crumbles, the rig pushes the new one up into place, and once it sinks back out the rock grows back over the shaft | under ground: the clock above ground on black, then the rock, and earth with roots, strata, stones and a fossil below |
-| 2 | **Bomber run**: the ground scrolls, a bomber climbs in and its bomb takes out the old minute; the new one fades in as it flies off | farmland: fields, trees and houses scrolling by |
+| 2 | **Bomber run**: the ground scrolls, a bomber climbs in and its bomb takes out the old minute; the new one fades in as it flies off | farmland: fields, trees, houses and mounds scrolling by under the clock, which stays on black |
 | 3 | **Lander**: a lander comes down, lifts the old minute away and sets the new one down in a puff of dust | the Moon: an Earthrise -- a big half Earth coming up over the lunar hills, stars above, cratered ground in front |
 
 **Changing the channel.** A wrist flick moves to the next show: a moment of TV

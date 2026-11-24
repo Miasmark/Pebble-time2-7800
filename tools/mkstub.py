@@ -574,7 +574,9 @@ BACKDROPS = [
           (144, 98, L_STILL, "PEBBLES", PW_P7), (8, 129, L_STILL, "PEBBLES", PW_P7),
           (70, 132, L_STILL, "PEBBLES", PW_P7), (112, 164, L_STILL, "PEBBLES", PW_P7),
           (24, 160, L_STILL, "PEBBLES", PW_P7), (128, 126, L_STILL, "FOSSIL", PW_P7)]),
-    (80, bomber_ground()),
+    # the bomber: the black band goes in last in zone 5, over any ground that
+    # has scrolled up that far, so the clock sits on black as in every show
+    (80, bomber_ground() + [(0, 80, L_STILL, "BAND", pw(6, 20)), (80, 80, L_STILL, "BAND", pw(6, 20))]),
     # the lander: stars, then Earthrise -- the top of the Earth over the hills
     # (zone 9), the dark ground in front (zones 10-11); the Earth goes in first so
     # the hills cover its foot
