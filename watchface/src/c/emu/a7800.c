@@ -287,8 +287,15 @@ static int write_line_ram(A7800 *m, uint16_t addr, uint8_t hpos, uint8_t pal) {
 }
 
 // Returns the MARIA clocks the line's DMA took, or 0 with DMA off.
+// In a frame nobody sees (no output set: the watch runs three of every four
+// frames that way) only the timing matters, so the pixels are not drawn into
+// line RAM: the DMA is walked and charged just the same. Line RAM is cleared
+// and redrawn every line, so the first shown line is drawn in full.
 static int draw_scanline(A7800 *m) {
-  memset(m->line_ram[m->active], 0, A7800_WIDTH);
+  bool draw = m->emit != NULL;
+  if (draw) {
+    memset(m->line_ram[m->active], 0, A7800_WIDTH);
+  }
   if (!m->dmaon) {
     return 0;
   }
@@ -336,13 +343,13 @@ static int draw_scanline(A7800 *m) {
           continue;
         }
         mc += 3;
-        hpos = (uint8_t)(hpos + write_line_ram(m, data_addr, hpos, pal));
-        if (m->cwidth) {
-          hpos = (uint8_t)(hpos + write_line_ram(m, (uint16_t)(data_addr + 1), hpos, pal));
-          mc += 6;
-        } else {
-          mc += 3;
+        if (draw) {
+          hpos = (uint8_t)(hpos + write_line_ram(m, data_addr, hpos, pal));
+          if (m->cwidth) {
+            hpos = (uint8_t)(hpos + write_line_ram(m, (uint16_t)(data_addr + 1), hpos, pal));
+          }
         }
+        mc += m->cwidth ? 6 : 3;
       } else {
         uint16_t data_addr = (uint16_t)(gfx + x + (m->offset << 8));
         if (x == 0 || (data_addr & 0xFF) == 0) {
@@ -356,8 +363,10 @@ static int draw_scanline(A7800 *m) {
           x += 0xFF - (data_addr & 0xFF);
           continue;
         }
-        uint8_t data = page ? page[data_addr & 0xFF] : dma_peek(m, data_addr);
-        hpos = (uint8_t)(hpos + write_line_data(m, data, hpos, pal));
+        if (draw) {
+          uint8_t data = page ? page[data_addr & 0xFF] : dma_peek(m, data_addr);
+          hpos = (uint8_t)(hpos + write_line_data(m, data, hpos, pal));
+        }
         mc += 3;
       }
     }
