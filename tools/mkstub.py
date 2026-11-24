@@ -343,8 +343,8 @@ def value_noise(seed, scale):
 
 def earth_rows():
     """56 x 28: the top of the Earth, rising -- ocean (1), land (2), cloud (3),
-    lit from the left with the night side (right) left dark; the bottom few
-    rows go behind the hills."""
+    lit from the left with the night side (right) dark inside a thin rim; the
+    bottom few rows go behind the hills."""
     rows = [[0] * 56 for _ in range(28)]
     land = value_noise(7, 7.0)
     land2 = value_noise(8, 3.5)
@@ -358,7 +358,11 @@ def earth_rows():
                 continue
             u, v = dx / r, dy / r
             if u > 0.62 * math.sqrt(max(0.0, 1 - v * v)):
-                continue                           # night
+                # night: dark, but the limb keeps a thin blue rim of
+                # atmosphere so the Earth's outline stays round
+                if dx * dx + dy * dy > (r - 1.3) ** 2:
+                    rows[y][x] = 1
+                continue
             c = 1
             if 0.65 * land(x, y) + 0.35 * land2(x, y) > 0.56:
                 c = 2
