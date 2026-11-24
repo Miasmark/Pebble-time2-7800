@@ -13,6 +13,11 @@
 //     -S STEPS     today's steps (CLK_STEPS, default 0)
 //     -g           charging (CLK_FLAGS bit 5)
 //     -C N         the channel (CLK_CHANNEL, 0-3)
+//     -H STEPS     the best day's steps (CLK_HI)
+//     -N           a new best day (CLK_FLAGS bit 2)
+//     -Q           paused: the watch's Quiet Time (CLK_FLAGS bit 3)
+//     -D           no phone (CLK_FLAGS bit 6 clear; it is set otherwise)
+//     -12          12-hour time (CLK_FLAGS bit 7)
 //     -k F,G,...   flick at these frames: the channel moves on by one
 //     -e N         snapshot every Nth frame (with -s FIRST,LAST as the range)
 //     -i FILE      input clip: one byte per frame, b7-4 SWCHA P0 bits, b0 fire
@@ -69,6 +74,8 @@ int main(int argc, char **argv) {
   long run_clock = -1;
   int frames = 60, quiet = 0, clock_hhmm = -1, probe = -1, channel = 0;
   const char *flicks = "";
+  long hi = 0;
+  int newhi = 0, paused = 0, nophone = 0, h12 = 0;
   const char *snaps = "", *prefix = "frame", *ramfile = NULL, *inpfile = NULL;
   for (int i = 2; i < argc; i++) {
     if (!strcmp(argv[i], "-f")) frames = atoi(argv[++i]);
@@ -87,6 +94,11 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "-g")) charging = 1;
     else if (!strcmp(argv[i], "-C")) channel = atoi(argv[++i]) & 3;
     else if (!strcmp(argv[i], "-k")) flicks = argv[++i];
+    else if (!strcmp(argv[i], "-H")) hi = atol(argv[++i]);
+    else if (!strcmp(argv[i], "-N")) newhi = 1;
+    else if (!strcmp(argv[i], "-Q")) paused = 1;
+    else if (!strcmp(argv[i], "-D")) nophone = 1;
+    else if (!strcmp(argv[i], "-12")) h12 = 1;
     else if (!strcmp(argv[i], "-e")) every = atoi(argv[++i]);
     else if (!strcmp(argv[i], "-p")) probe = (int)strtol(argv[++i], NULL, 16);
   }
@@ -121,6 +133,13 @@ int main(int argc, char **argv) {
   }
 
   if (look) m.clock[A7800_CLK_FLAGS] |= 0x10;
+  if (!nophone) m.clock[A7800_CLK_FLAGS] |= 0x40;
+  if (h12) m.clock[A7800_CLK_FLAGS] |= 0x80;
+  if (paused) m.clock[A7800_CLK_FLAGS] |= 0x08;
+  if (newhi) m.clock[A7800_CLK_FLAGS] |= 0x04;
+  m.clock[A7800_CLK_HI_H] = bcd((int)(hi / 10000 % 100));
+  m.clock[A7800_CLK_HI_M] = bcd((int)(hi / 100 % 100));
+  m.clock[A7800_CLK_HI_L] = bcd((int)(hi % 100));
   if (charging) m.clock[A7800_CLK_FLAGS] |= 0x20;
   m.clock[A7800_CLK_BATTERY] = (uint8_t)battery;
   m.clock[A7800_CLK_STEPS_HI] = bcd((int)(steps / 10000 % 100));

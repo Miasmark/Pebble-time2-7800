@@ -1,9 +1,10 @@
 # Clock registers
 
-A small read-only block at `$0600-$060F` through which the watch tells a
-cartridge the time. The watch core always answers there, whatever the
-cartridge's size: it is the one block below `$4000` that nothing in the
-console, a cartridge mapper or an add-on uses (going by the a7800 fork of MAME):
+A small read-only block at `$0600-$061F` through which the watch tells a
+cartridge the time, and a few things about the wearer's day. The watch core
+always answers there, whatever the cartridge's size: `$0600-$07FF` is the one
+range below `$4000` that nothing in the console, a cartridge mapper or an
+add-on uses (going by the a7800 fork of MAME):
 
 | range | taken by |
 |---|---|
@@ -29,12 +30,14 @@ All values are BCD unless marked binary.
 | `$0604` | `CLK_DAY` | day of month, `$01-$31` |
 | `$0605` | `CLK_MONTH` | month, `$01-$12` |
 | `$0606` | `CLK_YEAR` | year, `$00-$99` |
-| `$0607` | `CLK_FLAGS` | b7 the wearer prefers a 12-hour clock, b6 phone linked, b5 charging, b4 this burst came from a wrist flick (the only input a watch face gets) |
+| `$0607` | `CLK_FLAGS` | b7 the wearer prefers a 12-hour clock, b6 phone linked, b5 charging, b4 this burst came from a wrist flick (the only input a watch face gets), b3 paused: the watch is in Quiet Time and draws one frame a minute, so play no shows, b2 today has just beaten the best day (set for one burst), b1-b0 reserved (0) |
 | `$0608` | `CLK_BATTERY` | battery percent, binary 0-100 |
 | `$0609-$060B` | `CLK_STEPS` | steps today, six BCD digits, high byte first |
 | `$060C` | `CLK_CHANNEL` | the channel, binary 0-3: the watch moves it on by one at each wrist flick (and remembers it). The clock stub shows hour + channel, mod 4 |
 | `$060D-$060E` | | reserved, read 0 |
 | `$060F` | `CLK_ID` | `$5A` when the block is present |
+| `$0610-$0612` | `CLK_HI` | the best day's steps (the high score), six BCD digits, high byte first: the best of the watch's step history (30 days) and its stored record, or today's if today is better |
+| `$0613-$061F` | | reserved, read 0 |
 
 The watch updates the block between frames, once a minute while the face is
 idle and every watch frame (four 7800 frames) during an animation burst. It
@@ -43,8 +46,8 @@ change in that window; a wrist flick starts a six-second burst with b4 set. A RO
 frame and draw from it, so that a single frame after a long sleep already shows
 the right state.
 
-Battery and steps (and the charging bit) are taken once, as a burst starts,
-and held for the burst.
+Battery, steps, the high score (and the charging and new-best bits) are taken
+once, as a burst starts, and held for the burst.
 
 Because the watch runs only short bursts of frames, a ROM should never count
 frames to keep time: the seconds register is the clock.

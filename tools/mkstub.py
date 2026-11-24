@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the clock cartridge: 16K of 7800 that stages every minute change by itself.
+"""Build the clock cartridge: 32K of 7800 that stages every minute change by itself.
 
     python tools/mkstub.py --toolkit ../a7800-toolkit -o build/clockstub.a78
 
@@ -44,15 +44,25 @@ DMA (on in every zone) blanks the pages either side of the graphics -- the way
 7800 games position sprites vertically. Assembled with the a7800 toolkit's
 tools/asm.py, given a header by its newgame.header().
 
-16K, the size of the smallest commercial cartridge. No signature: the watch
-starts it without a BIOS, as the a7800 fork of MAME does in its no-BIOS mode.
+Around the shows: the hour in 12- or 24-hour form as the watch is set; the
+best day's steps as the HI score, and NEW HI the first time today beats it;
+GAME OVER when the battery's lives run out; STAGE CLEAR as the cruiser drives
+off the end of the hour; faint snow below the clock while the phone is away;
+and no shows at all while the watch is in Quiet Time (CLK_FLAGS bit 3).
+
+32K, linear ($8000-$FFFF), with two graphics blocks, at $E000 and $A000. No
+signature: the watch starts it without a BIOS, as the a7800 fork of MAME does
+in its no-BIOS mode.
 """
 import argparse
 import math
 import os
 import sys
 
-ROM_BASE = 0xC000      # code from here
+ROM_BASE = 0x8000      # code from here (a 32K cartridge, $8000-$FFFF)
+GFX2 = 0xA000          # a second 16-page graphics block: the bar's characters,
+                       # the words, the snow. Graphics blocks sit at $A000, $C000
+                       # or $E000: holey DMA blanks the 4K either side of them
 NOISE = 0xD000         # 16 pages of random bytes for channel-change static
 GFX = 0xE000           # 16 pages: page $E0 + (15 - line) holds line `line` of every glyph
 TABLES = 0xF000        # the display list list and tables
@@ -61,7 +71,8 @@ DLBASE = 0x1900        # 64 bytes (15 entries) per zone's display list: $1900-$1
 DLBASE_B = 0x2200      # the second set, for zones 1-11: built while the first is shown
 DL_STRIDE = 64
 HUD_ZONE = 12          # lines 210-225 (watch rows 168-183)
-MAP1, MAP2 = 0x1D00, 0x1D10    # character maps for the bar's two entries
+MAP1, MAP2 = 0x1D00, 0x1D10    # character maps for the bar's lives and 1UP score
+MAP3 = 0x1D40                  # ... and the HI score
 
 BIG_DIGITS = [
     [0x1F, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1F],
@@ -383,8 +394,52 @@ WIDE = [("STRATA", strata_tile(), 20), ("HORIZON", horizon_tile(), 20),
 
 
 def pw(palette, nbytes):
-    """A display list entry's palette | width byte."""
+    """A display list entry's palette | width byte (a 4-byte header: 1-31 bytes;
+    a width field of 0 would mark a 5-byte header instead)."""
+    assert 1 <= nbytes <= 31, nbytes
     return (palette << 5) | ((32 - nbytes) & 0x1F)
+
+
+# the words, in the clock's square 5x7 font, each font pixel 2 wide and 2 tall,
+# coloured like the digits (palette 0): yellow, orange, red from the top
+LETTERS = {
+    "G": [0x1F, 0x10, 0x10, 0x17, 0x11, 0x11, 0x1F], "A": [0x1F, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11],
+    "M": [0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11], "E": [0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F],
+    "O": [0x1F, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1F], "V": [0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04],
+    "R": [0x1F, 0x11, 0x11, 0x1F, 0x14, 0x12, 0x11], "S": [0x1F, 0x10, 0x10, 0x1F, 0x01, 0x01, 0x1F],
+    "T": [0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04], "C": [0x1F, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F],
+    "L": [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F], "N": [0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11],
+    "W": [0x11, 0x11, 0x11, 0x15, 0x15, 0x1B, 0x11], "H": [0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11],
+    "I": [0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x1F],
+}
+
+
+def word_lines(word):
+    """(16 lines, bytes wide) for a word, 12 pixels a letter."""
+    width = len(word) * 12 - 2
+    nb = (width + 3) // 4
+    lines = [[0] * (nb * 4) for _ in range(16)]
+    for k, ch in enumerate(word):
+        for r, bits in enumerate(LETTERS[ch]):
+            colour = 3 if r < 2 else (2 if r < 5 else 1)
+            for c in range(5):
+                if bits & (0x10 >> c):
+                    for dy in range(2):
+                        for dx in range(2):
+                            lines[1 + 2 * r + dy][k * 12 + c * 2 + dx] = colour
+    return lines, nb
+
+
+def snow_tile():
+    """128 x 16, palette 1 (white, grey, light blue): sparse snow for a lost
+    phone link."""
+    lines = [[0] * 128 for _ in range(16)]
+    seed = 1986
+    for _ in range(60):
+        seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+        x, y = (seed >> 8) % 128, (seed >> 16) % 16
+        lines[y][x] = (1, 2, 2, 3)[(seed >> 4) & 3]
+    return lines
 
 
 GLYPHS = []      # (name, 16 lines x 16 pixels)
@@ -441,7 +496,7 @@ def boom_lines(frame):
                 lines[y][x] = 3
     else:
         seed = 7800
-        for _ in range(40):
+        for _ in range(60):
             seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
             a = (seed >> 8) % 360 * math.pi / 180
             seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
@@ -560,8 +615,8 @@ GLYPHS = build_glyphs()
 N_GLYPHS = len(GLYPHS)
 
 # character mode (CTRL bit 4 clear): one byte, four pixels, per character, read
-# from (CHARBASE + offset) << 8 | code -- the same pages as the glyphs, after them
-CH_SPACE = N_GLYPHS * 4
+# from (CHARBASE + offset) << 8 | code -- the second graphics block, from its start
+CH_SPACE = 0
 SMALL_DIGITS = [
     ["111", "101", "101", "101", "111"], ["010", "110", "010", "010", "111"],
     ["111", "001", "111", "100", "111"], ["111", "001", "111", "001", "111"],
@@ -595,7 +650,9 @@ def small_chars():
     out = [("SPACE", char([], 0))]
     out += [("D%d" % d, char(rows, 3)) for d, rows in enumerate(SMALL_DIGITS)]   # yellow
     out += [("U", char(SMALL_U, 2)), ("P", char(SMALL_P, 2)),                   # red
-            ("R1", char(SMALL_DIGITS[1], 2))]
+            ("R1", char(SMALL_DIGITS[1], 2)),
+            ("H", char(["101", "101", "111", "101", "101"], 2)),
+            ("I", char(["111", "010", "010", "010", "111"], 2))]
     for k, icon in enumerate(MINI):                                             # tinted
         out += [("LIFE%dL" % k, char([r[:4] for r in icon], 1)),
                 ("LIFE%dR" % k, char([r[4:] for r in icon], 1))]
@@ -655,6 +712,9 @@ CLK_STEPS_HI = $0609
 CLK_STEPS_MID = $060A
 CLK_STEPS_LO = $060B
 CLK_CHANNEL = $060C
+CLK_HI_H = $0610     ; the best day's steps, six BCD digits
+CLK_HI_M = $0611
+CLK_HI_L = $0612
 
 FRAME    = $0080     ; free-running, for flicker only
 LASTSEC  = $0081
@@ -706,6 +766,7 @@ BDVALID  = $00BC     ; and $BD: the show whose still backdrop each set of lists
 BSET     = $00BE     ; the set being built: 0 or 1
 BDBASE   = $1D20     ; backdrop entries at the head of each zone's list: $1D20-$1D2F
                      ; for the first set, $1D30-$1D3F for the second
+HOURD    = $00D0     ; the hour as shown: 24- or 12-hour, BCD
 SHADOW   = $00C0     ; $C0-$C9: BACKGRND, P5, P6, P7 for the frame being built,
                      ; written in vertical blank as its lists go up
 """
@@ -770,7 +831,7 @@ clear_shadow:
     LDA #$A7
     STA RND
     LDA #CH_SPACE             ; the bar's character maps start blank
-    LDX #$1F
+    LDX #$4F
 blank_maps:
     STA MAP1,X
     DEX
@@ -780,9 +841,9 @@ hud_list:
     LDA hud_dl_init,X
     STA HUD_DL,X
     INX
-    CPX #$0A
+    CPX #$0F
     BNE hud_list
-    LDA #$E0                  ; characters come from the glyph pages
+    LDA #>gfx2                ; characters come from the second graphics block
     STA CHARBASE
     LDA #$36
     STA P4C2                  ; bar: red 1UP
@@ -864,6 +925,12 @@ no_show:
     LDA #$FF
     STA STAGE
 stage_done:
+    LDA CLK_FLAGS             ; paused (the watch's Quiet Time): no shows
+    AND #$08
+    BEQ not_paused
+    LDA #$FF
+    STA STAGE
+not_paused:
     LDA SUBF                  ; a volley every 30 frames
     CMP #$1E
     BCC local_ok
@@ -882,6 +949,9 @@ local_ok:
     CMP LASTSCENE
     BEQ same_show
     STA LASTSCENE
+    LDA CLK_FLAGS             ; (not while paused: the watch draws one frame a minute)
+    AND #$08
+    BNE same_show
     LDA #STATIC_FRAMES
     STA STATIC
 same_show:
@@ -1003,21 +1073,45 @@ bd_cut:
     BNE bd_cut
 bd_ready:
 
-    ; ---- the hours and the colon, palette 0 ----
+    ; ---- the hours and the colon, palette 0; 12-hour time if the wearer
+    ; prefers it (CLK_FLAGS bit 7), without a leading zero ----
+    LDA CLK_HOUR
+    STA HOURD
+    BIT CLK_FLAGS
+    BPL hours_set
+    JSR bcd_to_bin
+    BNE h_not0
+    LDA #$0C                  ; 0 is 12
+h_not0:
+    CMP #$0D
+    BCC h_le12
+    SBC #$0C                  ; 13-23 are 1-11 (carry is set)
+h_le12:
+    CMP #$0A
+    BCC h_bcd
+    ADC #$05                  ; 10-12 in BCD (+6, carry is set)
+h_bcd:
+    STA HOURD
+hours_set:
     LDA #$1C                  ; palette 0, 4 bytes wide
     STA TMP_PAL
     LDX #$05
     LDA #$20
     STA TMP_X
-    LDA CLK_HOUR
+    LDA HOURD
     LSR
     LSR
     LSR
     LSR
+    BNE h_tens
+    BIT CLK_FLAGS
+    BMI h_units
+h_tens:
     JSR add_obj
+h_units:
     LDA #$34
     STA TMP_X
-    LDA CLK_HOUR
+    LDA HOURD
     AND #$0F
     JSR add_obj
     LDA #$48
@@ -1048,12 +1142,33 @@ scene_return:
     CLC
     ADC TMP_G
     STA TMP_X
+    LDA MINB                  ; :59:57-:59:59 of the hour: it drives off the end
+    CMP #59
+    BNE cruise
+    LDY STAGE
+    CPY #$03
+    BCS cruise
+    LDA SUBF
+    LSR
+    LSR
+    CLC
+    ADC times15,Y
+    CLC
+    ADC TMP_X
+    STA TMP_X
+cruise:
     LDA #$3C
     STA TMP_PAL
     LDY SCENE
     LDA cruiser_g,Y
     LDX #$0B
     JSR add_obj
+
+    JSR words                 ; STAGE CLEAR, NEW HI, GAME OVER
+    BIT CLK_FLAGS             ; no phone: snow (bit 6 clear)
+    BVS linked
+    JSR snow
+linked:
 
     ; ---- the bar: lives = battery in 20% steps (at least 1, at most 5) ----
 the_bar:
@@ -1075,6 +1190,14 @@ lives_min_ok:
     BCC lives_max_ok
     LDX #$05
 lives_max_ok:
+    LDA CLK_FLAGS             ; out of lives at 10% or less, unless charging
+    AND #$20
+    BNE lives_set
+    LDA CLK_BATTERY
+    CMP #$0B
+    BCS lives_set
+    LDX #$00
+lives_set:
     STX LIVES
     LDA CLK_FLAGS             ; green while charging, red on the last life
     AND #$20
@@ -1114,6 +1237,32 @@ next_life:
     INX
     CPX #$05
     BNE fill_lives
+
+    ; ---- the best day's steps ----
+    LDA #CH_H
+    STA MAP3
+    LDA #CH_I
+    STA MAP3+1
+    LDA #CH_SPACE
+    STA MAP3+2
+    LDA CLK_HI_H
+    JSR high_digit
+    STA MAP3+3
+    LDA CLK_HI_H
+    JSR low_digit
+    STA MAP3+4
+    LDA CLK_HI_M
+    JSR high_digit
+    STA MAP3+5
+    LDA CLK_HI_M
+    JSR low_digit
+    STA MAP3+6
+    LDA CLK_HI_L
+    JSR high_digit
+    STA MAP3+7
+    LDA CLK_HI_L
+    JSR low_digit
+    STA MAP3+8
 
     ; ---- and the score: today's steps ----
     LDA #CH_R1
@@ -1791,6 +1940,97 @@ scrl_still:
     STA SCRL
     RTS
 
+; the words, in zone 8 from the second graphics block: STAGE CLEAR as the
+; hour runs out (minute 59, :57-:59, flashing), and while no show is on, NEW HI
+; (the watch's bit 2: today beat the best day) or GAME OVER (out of lives)
+words:
+    LDA #>gfx2
+    STA TMP_HI
+    LDX #$08
+    LDA STAGE
+    CMP #$03
+    BCS words_idle
+    LDA MINB
+    CMP #59
+    BNE words_done
+    LDA FRAME
+    AND #$08
+    BNE words_done
+    LDA #PW_STAGE
+    STA TMP_PAL
+    LDA #$0E
+    STA TMP_X
+    LDA #WD_STAGE
+    JSR add_obj_lo
+    LDA #$56
+    STA TMP_X
+    LDA #WD_CLEAR
+    JMP add_obj_lo
+words_idle:
+    CMP #$FF
+    BNE words_done
+    LDA CLK_FLAGS
+    AND #$04
+    BEQ words_over
+    LDA #PW_NEW
+    STA TMP_PAL
+    LDA #$2C
+    STA TMP_X
+    LDA #WD_NEW
+    JSR add_obj_lo
+    LDA #PW_HI
+    STA TMP_PAL
+    LDA #$5C
+    STA TMP_X
+    LDA #WD_HI
+    JMP add_obj_lo
+words_over:
+    LDA CLK_FLAGS
+    AND #$20
+    BNE words_done
+    LDA CLK_BATTERY
+    CMP #$0B
+    BCS words_done
+    LDA #PW_GAME
+    STA TMP_PAL
+    LDA #$1B
+    STA TMP_X
+    LDA #WD_GAME
+    JSR add_obj_lo
+    LDA #$57
+    STA TMP_X
+    LDA #WD_OVER
+    JMP add_obj_lo
+words_done:
+    RTS
+
+; a lost phone link: faint snow over zones 6-11 -- below the clock, above the
+; bar -- from a random place in the snow tile, at a random x, new every frame
+snow:
+    LDA #>gfx2
+    STA TMP_HI
+    LDA #PW_SNOW
+    STA TMP_PAL
+    LDX #$06
+snow_zone:
+    JSR snow_entry            ; one 80-pixel window a zone, somewhere new each frame
+    INX
+    CPX #$0C
+    BNE snow_zone
+    RTS
+snow_entry:
+    JSR rnd
+    STA TMP_X
+    JSR rnd
+    AND #$0F                  ; a 20-byte window into the 32-byte tile
+    CMP #$0D
+    BCC snow_lo
+    AND #$07
+snow_lo:
+    CLC
+    ADC #SNOW
+    JMP add_obj_lo
+
 ; empty the lists of zones 1-11 in the set being built
 empty_lists:
     LDX #$01
@@ -1876,6 +2116,8 @@ add_obj:
 add_obj_hi:
     ASL
     ASL
+; ... with the entry's low byte in A rather than a glyph number
+add_obj_lo:
     STA TMP_G
     LDA ZCNT,X
     CMP #$0F                  ; a list holds 15
@@ -2087,13 +2329,24 @@ nmi:
 SHOOTER = "    ; ---- the minutes: palette 2, or from :59.5 the blast in palette 3 ----\n    LDA STAGE\n    CMP #$02\n    BNE minute_digits\n    LDA SUBF\n    CMP #$1E\n    BCC minute_digits\n    LDA #$7C                  ; palette 3\n    STA TMP_PAL\n    JSR draw_blast\n    JMP minutes_done\nminute_digits:\n    LDA #$5C                  ; palette 2 (and x = 92, as it happens)\n    STA TMP_PAL\n    STA TMP_X\n    LDA CLK_MIN\n    LSR\n    LSR\n    LSR\n    LSR\n    JSR add_obj\n    LDA #$70\n    STA TMP_X\n    LDA CLK_MIN\n    AND #$0F\n    JSR add_obj\nminutes_done:\n\n    ; ---- colours: a hit flashes the minutes white; :00 fades the new one in ----\n    LDA STAGE\n    CMP #$01\n    BEQ maybe_hit\n    CMP #$02\n    BNE no_hit\n    LDA SUBF\n    CMP #$1E\n    BCS no_hit\nmaybe_hit:\n    LDA LOCAL\n    CMP #$0C\n    BCC no_hit\n    CMP #$10\n    BCS no_hit\n    LDA #$0E\n    STA P2C1\n    STA P2C2\n    STA P2C3\nno_hit:\n    JSR fade_minutes\n\n    ; ---- the two attackers, zone 9 ----\n    LDA STAGE\n    CMP #$FF\n    BNE ships_on\n    JMP ships_done\nships_on:\n    CMP #$00\n    BNE not_arriving\n    LDA SUBF                  ; :57 -- A from the left to 92, B from the right to 112\n    CMP #$36\n    BCS a_there\n    ASL\n    SEC\n    SBC #$10\n    JMP a_set\na_there:\n    LDA #$5C\na_set:\n    STA SHIPA\n    LDA SUBF\n    CMP #$20\n    BCS b_there\n    ASL\n    STA TMP_G\n    LDA #$B0\n    SEC\n    SBC TMP_G\n    JMP b_set\nb_there:\n    LDA #$70\nb_set:\n    STA SHIPB\n    JMP place_ships\nnot_arriving:\n    CMP #$05\n    BNE on_station\n    LDA SUBF                  ; :02 -- they leave the way they came\n    ASL\n    STA TMP_G\n    LDA #$5C\n    SEC\n    SBC TMP_G\n    STA SHIPA\n    LDA #$70\n    CLC\n    ADC TMP_G\n    STA SHIPB\n    JMP place_ships\non_station:\n    LDA #$5C\n    STA SHIPA\n    LDA #$70\n    STA SHIPB\nplace_ships:\n    LDA #$3C                  ; palette 1\n    STA TMP_PAL\n    LDX #$09\n    LDA SHIPA\n    STA TMP_X\n    LDA #$0B\n    JSR add_obj\n    LDA SHIPB\n    STA TMP_X\n    LDA #$0B\n    JSR add_obj\n\n    ; ---- their shots: :58 and the first half of :59 ----\n    LDA STAGE\n    CMP #$01\n    BEQ shots_maybe\n    CMP #$02\n    BNE ships_done\n    LDA SUBF\n    CMP #$1E\n    BCS ships_done\nshots_maybe:\n    LDA LOCAL\n    CMP #$0C\n    BCS ships_done\n    ASL                       ; 4 lines a frame\n    ASL\n    STA TMP_G\n    LDA #$2C                  ; y = 44 - 4 * LOCAL, lines below the top of zone 6\n    SEC\n    SBC TMP_G\n    STA SHOTY\n    LSR\n    LSR\n    AND #$03\n    CLC\n    ADC #$0C                  ; the copy shifted to y's 4-line step\n    STA BOOM\n    LDA SHOTY\n    LSR\n    LSR\n    LSR\n    LSR\n    CLC\n    ADC #$06\n    TAX                       ; zone 6, 7 or 8\n    LDA #$7C\n    STA TMP_PAL\n    LDA SHIPA\n    STA TMP_X\n    LDA BOOM\n    JSR add_obj\n    LDA SHIPB\n    STA TMP_X\n    LDA BOOM\n    JSR add_obj\nships_done:\n"
 
 
-WIDE_BASE = CH_SPACE + len(small_chars())   # the wide tiles, after the characters
+WIDE_BASE = N_GLYPHS * 4                    # the wide tiles, after the glyphs
 WIDE_LO = {}
 _o = WIDE_BASE
 for _n, _l, _b in WIDE:
     WIDE_LO[_n] = _o
     _o += _b
 assert _o <= 256, "the glyph pages are full (%d bytes)" % _o
+
+# the second block: the characters, then the words, then the snow
+WORDS = ["GAME", "OVER", "STAGE", "CLEAR", "NEW", "HI"]
+BLOCK2 = [(n, l) for n, l in small_chars()]           # one byte each
+BLOCK2_WIDE = [("WD_" + w,) + word_lines(w) for w in WORDS] + [("SNOW", snow_tile(), 32)]
+BLOCK2_LO = {}
+_o = len(BLOCK2)
+for _n, _l, _b in BLOCK2_WIDE:
+    BLOCK2_LO[_n] = _o
+    _o += _b
+assert _o <= 256, "the second graphics block is full (%d bytes)" % _o
 
 
 def source():
@@ -2106,15 +2359,36 @@ def source():
     a("MAP2     = $%04X" % MAP2)
     for i, (name, _) in enumerate(GLYPHS):
         a("G_%-8s= $%02X" % (name, i))
+    a("MAP3     = $%04X" % MAP3)
     for i, (name, _) in enumerate(small_chars()):
-        a("CH_%-6s= $%02X" % (name, CH_SPACE + i))
+        a("CH_%-6s= $%02X" % (name, i))
+    for name, lines, nb in BLOCK2_WIDE:
+        a("%-9s= $%02X" % (name, BLOCK2_LO[name]))
+        if name == "SNOW":    # read through a 20-byte window that wanders over it
+            a("PW_SNOW  = $%02X" % pw(1, 20))
+        else:
+            a("PW_%-6s= $%02X" % (name[3:], pw(0, nb)))
     for name, _, _ in WIDE:
         a("W_%-8s= $%02X" % (name, WIDE_LO[name]))
     a("")
     a("    .org $%04X" % ROM_BASE)
     a(CODE_ASM.strip().replace("SHOOTER_CODE", SHOOTER.rstrip("\n")))
     a("code_end:")
-    a("    .res $%04X-code_end,$00" % NOISE)
+    a("    .res $%04X-code_end,$00" % GFX2)
+    a("gfx2:                 ; the second graphics block")
+    for page in range(16):
+        line = 15 - page
+        data = []
+        for _, ch in BLOCK2:
+            px = ch[line]
+            data.append((px[0] << 6) | (px[1] << 4) | (px[2] << 2) | px[3])
+        for _, w, nb in BLOCK2_WIDE:
+            for b in range(0, nb * 4, 4):
+                data.append((w[line][b] << 6) | (w[line][b + 1] << 4) | (w[line][b + 2] << 2) | w[line][b + 3])
+        a("    .byte " + ",".join("$%02X" % b for b in data))
+        a("    .res $%X,$00" % (256 - len(data)))
+    a("gfx2_end:")
+    a("    .res $%04X-gfx2_end,$00" % NOISE)
     a("noise:                ; the static: 16 pages of random bytes")
     seed = 7800
     for _ in range(4096 // 32):
@@ -2129,9 +2403,6 @@ def source():
         data = []
         for _, g in GLYPHS:
             data += pack160a(g[line])
-        for _, ch in small_chars():
-            px = ch[line]
-            data.append((px[0] << 6) | (px[1] << 4) | (px[2] << 2) | px[3])
         for _, w, nb in WIDE:
             for b in range(0, nb * 4, 4):
                 data.append((w[line][b] << 6) | (w[line][b + 1] << 4) | (w[line][b + 2] << 2) | w[line][b + 3])
@@ -2190,9 +2461,12 @@ def source():
     a("    .byte " + ",".join("$%02X" % ((DLBASE + z * DL_STRIDE) & 0xFF) for z in range(DL_ZONES)))
     a("zhi:")
     a("    .byte " + ",".join("$%02X" % ((DLBASE + z * DL_STRIDE) >> 8) for z in range(DL_ZONES)))
-    a("hud_dl_init:          ; two character-mode entries, palette 4, 10 characters each")
+    a("hud_dl_init:          ; character-mode entries, palette 4: lives, HI, 1UP")
     a("    .byte $%02X,$60,$%02X,$96,$08" % (MAP1 & 0xFF, MAP1 >> 8))
+    a("    .byte $%02X,$60,$%02X,$97,$3C" % (MAP3 & 0xFF, MAP3 >> 8))
     a("    .byte $%02X,$60,$%02X,$96,$70" % (MAP2 & 0xFF, MAP2 >> 8))
+    a("times15:")
+    a("    .byte $00,$0F,$1E")
     a("scene_tab:")
     a("    .word scene_shooter-1")
     a("    .word scene_drill-1")

@@ -45,6 +45,7 @@ int main(int argc, char **argv) {
     m.clock[A7800_CLK_MIN] = bcd((int)(s / 60 % 60));
     m.clock[A7800_CLK_HOUR] = bcd((int)(s / 3600 % 24));
     m.clock[A7800_CLK_BATTERY] = 100;
+    m.clock[A7800_CLK_FLAGS] = 0x40;   // phone linked
     g_seen = -1;
     m.cpu.rd_page[addr >> 8] = NULL;   // (the core remaps pages when INPTCTRL is written)
     a7800_run_frame(&m);

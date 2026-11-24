@@ -8,6 +8,10 @@
 // one draw a minute otherwise. Each 30 draws it logs how long a draw took.
 // A wrist flick changes the channel: the cartridge's show moves on by one
 // (static, then the next show), and the choice is kept across restarts.
+// It also passes the best day's steps (the HI score, from the step history and
+// a stored record) and flags for 12-hour time, a lost phone, a new best day and
+// Quiet Time -- in which there are no minute shows, one draw a minute, and the
+// cabinet's PAUSE button is lit.
 //
 // With USE_EMULATOR at 0, the hand-built hourly scenes below are drawn instead.
 //
@@ -651,6 +655,23 @@ static uint16_t s_flick_ms;
 // starts, so the bar and the score change at most once a burst
 static BatteryChargeState s_battery_shown;
 static int s_steps_shown;
+// the high score: the best day's steps. The best of the days before today
+// comes from the watch's step history (30 days) and a stored record, so it
+// outlasts the history; NEW HI is announced once, in the first burst after
+// today passes it
+#define PERSIST_BEST 2
+#define PERSIST_BEST_DAY 3
+#define PERSIST_ANNOUNCED_DAY 4
+#define HISTORY_DAYS 30
+static int s_best_prev;          // the best day before today
+static int s_best_day = -1;      // the day s_best_prev was worked out on
+static int s_announced_day = -1; // the day NEW HI was last shown
+static int s_hi_shown;
+static bool s_new_hi_shown;
+static int s_steps_seen;         // today's steps as last seen, in case there is no
+static int s_steps_seen_day = -1;  // history to find yesterday in
+// Quiet Time: no minute shows, one draw a minute, the PAUSE button lit
+static bool s_quiet;
 static uint8_t s_regs_base[NUM_REGS];
 
 static const char *DAYS[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
@@ -817,12 +838,17 @@ static void emu_set_clock(void) {
   c[A7800_CLK_MONTH] = bcd(t->tm_mon + 1);
   c[A7800_CLK_YEAR] = bcd(t->tm_year % 100);
   c[A7800_CLK_FLAGS] = (uint8_t)((clock_is_24h_style() ? 0 : 0x80) | (s_connected ? 0x40 : 0) |
-                                 (s_battery_shown.is_charging ? 0x20 : 0) | (s_look ? 0x10 : 0));
+                                 (s_battery_shown.is_charging ? 0x20 : 0) | (s_look ? 0x10 : 0) |
+                                 (s_quiet && !s_look ? 0x08 : 0) | (s_new_hi_shown ? 0x04 : 0));
   c[A7800_CLK_BATTERY] = s_battery_shown.charge_percent;
   int st = s_steps_shown % 1000000;
   c[A7800_CLK_STEPS_HI] = bcd(st / 10000);
   c[A7800_CLK_STEPS_MID] = bcd((st / 100) % 100);
   c[A7800_CLK_STEPS_LO] = bcd(st % 100);
+  int hi = s_hi_shown % 1000000;
+  c[A7800_CLK_HI_H] = bcd(hi / 10000);
+  c[A7800_CLK_HI_M] = bcd((hi / 100) % 100);
+  c[A7800_CLK_HI_L] = bcd(hi % 100);
   c[A7800_CLK_CHANNEL] = (uint8_t)s_channel;
   s_scene = (t->tm_hour + s_channel) % 4;    // the channel knob points at it
 }
@@ -1139,9 +1165,9 @@ static void draw_cabinet(GContext *ctx, GRect b) {
   graphics_context_set_fill_color(ctx, s_connected ? GColorGreen : GColorRed);
   graphics_fill_rect(ctx, GRect(92, 217, 3, 3), 0, GCornerNone);
 
-  // POWER, PAUSE, SELECT, RESET
-  graphics_context_set_fill_color(ctx, GColorBlack);
+  // POWER, PAUSE, SELECT, RESET; PAUSE lights up during Quiet Time
   for (int i = 0; i < 4; i++) {
+    graphics_context_set_fill_color(ctx, (i == 1 && s_quiet) ? GColorChromeYellow : GColorBlack);
     graphics_fill_rect(ctx, GRect(100 + i * 22, 216, 18, 6), 2, GCornersAll);
   }
 }
@@ -1179,9 +1205,55 @@ static void frame_tick(void *data) {
   }
 }
 
+static int today_key(void) {
+  time_t now = time(NULL);
+  struct tm *t = localtime(&now);
+  return t->tm_year * 400 + t->tm_yday;
+}
+
+// once a day: the best of the days before today, from the step history and
+// the stored record
+static void update_best_prev(void) {
+  int key = today_key();
+  if (key == s_best_day) {
+    return;
+  }
+  if (s_steps_seen_day >= 0 && s_steps_seen_day != key && s_steps_seen > s_best_prev) {
+    s_best_prev = s_steps_seen;  // the last day this face saw
+  }
+#if defined(PBL_HEALTH)
+  time_t today = time_start_of_today();
+  for (int d = 1; d <= HISTORY_DAYS; d++) {
+    time_t start = today - (time_t)d * SECONDS_PER_DAY;
+    time_t end = start + SECONDS_PER_DAY;
+    if (health_service_metric_accessible(HealthMetricStepCount, start, end) &
+        HealthServiceAccessibilityMaskAvailable) {
+      int v = (int)health_service_sum(HealthMetricStepCount, start, end);
+      if (v > s_best_prev) {
+        s_best_prev = v;
+      }
+    }
+  }
+#endif
+  s_best_day = key;
+  persist_write_int(PERSIST_BEST, s_best_prev);
+  persist_write_int(PERSIST_BEST_DAY, s_best_day);
+}
+
 static void latch_shown_values(void) {
   s_battery_shown = s_battery;
   s_steps_shown = s_steps;
+  update_best_prev();
+  s_steps_seen = s_steps;
+  s_steps_seen_day = today_key();
+  s_hi_shown = s_steps_shown > s_best_prev ? s_steps_shown : s_best_prev;
+  s_new_hi_shown = false;
+  int key = today_key();
+  if (s_best_prev > 0 && s_steps_shown > s_best_prev && s_announced_day != key) {
+    s_new_hi_shown = true;     // this burst, and the picture it leaves, say NEW HI
+    s_announced_day = key;
+    persist_write_int(PERSIST_ANNOUNCED_DAY, s_announced_day);
+  }
 }
 
 static void start_burst_frames(int frames) {
@@ -1216,7 +1288,10 @@ static void schedule_preminute(void) {
 
 static void preminute_fired(void *data) {
   s_preminute_timer = NULL;
-  start_burst_frames(PREMINUTE_FRAMES);
+  s_quiet = quiet_time_is_active();
+  if (!s_quiet) {
+    start_burst_frames(PREMINUTE_FRAMES);
+  }
   schedule_preminute();
 }
 #endif
@@ -1245,7 +1320,11 @@ static void update_steps(void) {
 static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   update_steps();
 #if USE_EMULATOR
-  return;   // the :57 burst has already drawn this minute's change
+  s_quiet = quiet_time_is_active();
+  if (s_quiet) {
+    start_burst_frames(1);    // Quiet Time: no show, just the new minute
+  }
+  return;   // otherwise the :57 burst has already drawn this minute's change
 #endif
   if (!s_timer) {
     s_frame += 12;    // keep the playfield drifting between bursts
@@ -1280,7 +1359,7 @@ static void battery_handler(BatteryChargeState state) {
 }
 
 static void connection_handler(bool connected) {
-  if (s_connected && !connected) {
+  if (s_connected && !connected && !quiet_time_is_active()) {
     vibes_double_pulse();
   }
   s_connected = connected;
@@ -1326,6 +1405,14 @@ static void init(void) {
   if (persist_exists(PERSIST_CHANNEL)) {
     s_channel = (int)persist_read_int(PERSIST_CHANNEL) & 3;
   }
+  if (persist_exists(PERSIST_BEST)) {
+    s_best_prev = (int)persist_read_int(PERSIST_BEST);
+    s_best_day = (int)persist_read_int(PERSIST_BEST_DAY);
+  }
+  if (persist_exists(PERSIST_ANNOUNCED_DAY)) {
+    s_announced_day = (int)persist_read_int(PERSIST_ANNOUNCED_DAY);
+  }
+  s_quiet = quiet_time_is_active();
   emu_init();
 #endif
 

@@ -51,13 +51,18 @@
 #define A7800_CLK_DAY 0x4
 #define A7800_CLK_MONTH 0x5
 #define A7800_CLK_YEAR 0x6        // 00-99
-#define A7800_CLK_FLAGS 0x7       // b7 12-hour preferred, b6 phone linked, b5 charging
+#define A7800_CLK_FLAGS 0x7       // b7 12-hour preferred, b6 phone linked, b5 charging,
+                                  // b4 wrist flick, b3 paused (Quiet Time), b2 new best day
 #define A7800_CLK_BATTERY 0x8     // 0-100 (binary)
 #define A7800_CLK_STEPS_HI 0x9    // steps, 6 BCD digits, high byte first
 #define A7800_CLK_STEPS_MID 0xA
 #define A7800_CLK_STEPS_LO 0xB
 #define A7800_CLK_CHANNEL 0xC     // 0-3, added to the hour's show (binary)
 #define A7800_CLK_ID 0xF          // reads $5A when the clock registers are present
+#define A7800_CLK_HI_H 0x10       // the best day's steps, 6 BCD digits, high byte first
+#define A7800_CLK_HI_M 0x11
+#define A7800_CLK_HI_L 0x12
+#define A7800_CLK_SIZE 0x20       // $0600-$061F
 
 // One shown scanline: `colours` are 160 MARIA colour bytes (hue << 4 | luma).
 typedef void (*a7800_line_fn)(void *ctx, int line, const uint8_t *colours);
@@ -71,7 +76,7 @@ typedef struct A7800 {
   uint32_t rom_size;
   uint32_t rom_start;
 
-  uint8_t clock[16];
+  uint8_t clock[A7800_CLK_SIZE];
 
   // inputs, set by the caller before a frame
   uint8_t swcha_in;             // joystick bits as SWCHA reads them, active low ($FF = centred)

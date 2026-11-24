@@ -190,8 +190,8 @@ static uint8_t cpu_read(void *ctx, uint16_t a) {
   if ((a & 0xFE80) == 0x0480) {
     return m->riot_ram[a & 0x7F];
   }
-  if ((a & 0xFFF0) == A7800_CLK_BASE) {
-    return m->clock[a & 0x0F];
+  if ((a & 0xFFE0) == A7800_CLK_BASE) {
+    return m->clock[a & 0x1F];
   }
   return 0x00;   // unmapped (and $2800-$3FFF: MAME maps nothing there)
 }
@@ -237,8 +237,8 @@ static uint8_t dma_peek(A7800 *m, uint16_t a) {
   if ((a & 0xFE80) == 0x0480) {
     return m->riot_ram[a & 0x7F];
   }
-  if ((a & 0xFFF0) == A7800_CLK_BASE) {
-    return m->clock[a & 0x0F];
+  if ((a & 0xFFE0) == A7800_CLK_BASE) {
+    return m->clock[a & 0x1F];
   }
   return 0x00;
 }
