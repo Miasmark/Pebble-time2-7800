@@ -491,11 +491,18 @@ L_STILL, L_GROUND = 3, 4
 
 
 def bomber_ground():
+    """The farmland: fields, trees and houses in palette 7, and the boulders
+    (palette 5) and mounds (palette 6) between them -- all on the ground layer,
+    so they scroll and wrap together, down to the bar."""
     seed, out, kinds = 2026, [], ["FIELD", "TREES", "FIELD", "TREES", "HOUSE"]
     for i in range(18):
         seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
         x = 4 + ((i * 53 + (seed >> 10) % 40) % 140)
         out.append((x, i * 14 + (seed >> 20) % 6, L_GROUND, kinds[i % 5], PW_P7))
+    for j, x in enumerate((12, 130, 50, 146, 84, 30, 110, 66, 140, 20)):
+        boulder = j % 2 == 0
+        out.append((x, j * 26 + 7, L_GROUND, "BOULDER" if boulder else "DUNE",
+                    pw(5, 4) if boulder else pw(6, 4)))
     return out
 
 
@@ -573,9 +580,6 @@ MINI = [
 # and the cruiser across the bottom, one per hour's show
 CRUISER = ["SHIP", "DRILL0", "PLANE", "LANDER"]
 
-# the bomber hour's ground: (x, phase, glyph, palette entry byte)
-TERRAIN = [(12, 0, "BOULDER", 0xBC), (50, 20, "DUNE", 0xDC), (130, 8, "BOULDER", 0xBC),
-           (84, 40, "DUNE", 0xDC), (30, 52, "BOULDER", 0xBC), (146, 36, "DUNE", 0xDC)]
 
 
 def small_chars():
@@ -1304,27 +1308,7 @@ dr_done:
 ; ======================================================================
 ; hour 2: bomber run
 ; ======================================================================
-scene_bomber:
-    LDY #$00                  ; the ground (SCRL is set by the backdrop)
-bm_ground:
-    LDA terr_phase,Y
-    CLC
-    ADC SCRL
-    AND #$3F
-    CLC
-    ADC #$60                  ; lines 96-159
-    STA POSY
-    LDA terr_x,Y
-    STA TMP_X
-    LDA terr_pal,Y
-    STA TMP_PAL
-    STY TMP_Y
-    LDA terr_g,Y
-    JSR put_y
-    LDY TMP_Y
-    INY
-    CPY #$06
-    BNE bm_ground
+scene_bomber:                 ; (the ground, boulders and mounds included, is the backdrop)
     LDA #$FF
     STA OBJY
     LDA STAGE
@@ -2115,14 +2099,6 @@ def source():
     a("    .byte " + ",".join("G_%s" % g for g in CRUISER))
     a("times30:")
     a("    .byte $00,$1E,$3C,$5A,$78,$96")
-    a("terr_x:")
-    a("    .byte " + ",".join("$%02X" % t[0] for t in TERRAIN))
-    a("terr_phase:")
-    a("    .byte " + ",".join("$%02X" % t[1] for t in TERRAIN))
-    a("terr_g:")
-    a("    .byte " + ",".join("G_%s" % t[2] for t in TERRAIN))
-    a("terr_pal:")
-    a("    .byte " + ",".join("$%02X" % t[3] for t in TERRAIN))
     a("tables_end:")
     a("    .res $FFFA-tables_end,$00")
     a("    .word nmi")

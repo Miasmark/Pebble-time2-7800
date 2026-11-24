@@ -156,7 +156,7 @@ python tests/dma_fit.py --toolkit ../a7800-toolkit --run build/a78run
 | RIOT timer and WSYNC vs MAME (`riot.a78`) | All eight blocks the toolkit checks are exact; the full 4K of RAM is byte-identical to the toolkit simulator's. |
 | DMA cost model vs the fork | Ceiling 1,960 iterations (MAME: 1,960); per line 5.657 cycles (fork 5.62), per zone 1.911 (1.89), per object 1.977 (1.99), per byte 0.750 (0.755). |
 | Skipping the vertical-blank wait loop | Same frames as running it instruction by instruction, for every show, including channel changes. |
-| Cost per watch draw (4 frames, 1 shown) | 2.3–3.3 million x86 instructions on this computer, depending on the show (callgrind, `-Os`). The face's own log gives the milliseconds on the watch. |
+| Cost per watch draw (4 frames, 1 shown) | 2.8–3.2 million x86 instructions on this computer, depending on the show (callgrind, `-Os`). The face's own log gives the milliseconds on the watch. |
 
 The DLI comes out at 13.1 cycles, against the toolkit's `docs/hardware.md`
 measurement of 17.4. The fork's current `maria.cpp` no longer charges DMA time
