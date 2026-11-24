@@ -630,7 +630,8 @@ NEXT_DPPL = $00B7    ; the display list list for the lists being built
 NEXT_DPPH = $00B8
 BDI      = $00B9     ; backdrop: the next item
 BDEND    = $00BA
-BDMIN    = $00BB     ; the first line it may use
+BDZMIN   = $00BB     ; the first zone it may use
+BDZ      = $00CF     ; the zone its top is in
 BDVALID  = $00BC     ; and $BD: the show whose still backdrop each set of lists
                      ; already holds ($FF: none)
 BSET     = $00BE     ; the set being built: 0 or 1
@@ -1520,8 +1521,8 @@ backdrop:
     JSR calc_scrl
     STA SOFF+4                ; the ground
     LDX SCENE
-    LDA bd_ymin,X
-    STA BDMIN
+    LDA bd_zmin,X
+    STA BDZMIN
     LDA bd_first,X
     STA BDI
     LDA bd_first+1,X
@@ -1529,24 +1530,63 @@ backdrop:
 bd_loop:
     LDY BDI
     CPY BDEND
-    BEQ bd_done
+    BNE bd_item
+    RTS
+bd_item:
     INC BDI
+    STY SIDX
     LDX bd_l,Y
     LDA bd_y,Y
     CLC
-    ADC SOFF,X
-    CMP BDMIN
-    BCC bd_loop               ; above where this show's backdrop starts
-    TAX                       ; the item's line, counting from zone 0's top
-    LDA zone_of,X
-    BMI bd_loop               ; not in zones 1-11
-    STA TMP3
-    LDA page_of,X             ; $E0 + the line within the zone
+    ADC SOFF,X                ; the item's top line, counting from zone 0's top
+    TAX
+    AND #$0F
+    STA PUT_T
+    TXA
+    LSR
+    LSR
+    LSR
+    LSR
+    STA BDZ
+    ; the top part: zone BDZ points at page $E0 + t
+    TAX
+    CPX BDZMIN
+    BCC bd_lower
+    CPX #$0C
+    BCS bd_loop               ; in the bar or below
+    LDA PUT_T
+    CLC
+    ADC #$E0
     STA TMP_HI
-    LDX TMP3
+    JSR bd_add
+bd_lower:
+    ; the part that spills into the next zone, if any: page $D0 + t there, and
+    ; holey DMA blanks the pages outside $E0-$EF (as put_y does)
+    LDA PUT_T
+    BEQ bd_loop
+    LDY SIDX
+    CLC
+    ADC bd_h,Y
+    CMP #$11
+    BCC bd_loop               ; it ends within its zone
+    LDX BDZ
+    INX
+    CPX BDZMIN
+    BCC bd_loop
+    CPX #$0C
+    BCS bd_loop
+    LDA PUT_T
+    CLC
+    ADC #$D0
+    STA TMP_HI
+    JSR bd_add
+    JMP bd_loop
+
+; one entry in zone X of the set being built: item SIDX, page TMP_HI
+bd_add:
     LDA ZCNT,X
     CMP #$0F
-    BCS bd_loop
+    BCS bd_add_full
     INC ZCNT,X
     ASL
     ASL
@@ -1556,6 +1596,7 @@ bd_loop:
     CLC
     ADC BUILDHI
     STA PTR+1
+    LDY SIDX
     LDA bd_x,Y
     STA TMP_X
     LDA bd_pw,Y
@@ -1576,23 +1617,7 @@ bd_loop:
     INY
     LDA #$00                  ; the end of the list
     STA (PTR),Y
-    JMP bd_loop
-bd_done:
-    RTS
-
-; empty the lists of zones 1-11 in the set being built
-empty_lists:
-    LDX #$01
-empty:
-    LDA #$00
-    STA ZCNT,X
-    JSR set_ptr
-    LDY #$01
-    LDA #$00
-    STA (PTR),Y
-    INX
-    CPX #$0C
-    BNE empty
+bd_add_full:
     RTS
 
 ; SCRL: how far the bomber's ground has scrolled -- half a line a frame
@@ -1614,6 +1639,22 @@ scrl_still:
     LDA #$00
     STA SCRL
     RTS
+
+; empty the lists of zones 1-11 in the set being built
+empty_lists:
+    LDX #$01
+empty:
+    LDA #$00
+    STA ZCNT,X
+    JSR set_ptr
+    LDY #$01
+    LDA #$00
+    STA (PTR),Y
+    INX
+    CPX #$0C
+    BNE empty
+    RTS
+
 
 ; channel-change static: two 80-pixel entries a zone over 4K of random bytes,
 ; from new random places every frame
@@ -1965,16 +2006,21 @@ def source():
     first.append(len(items))
     names = [n for n, _ in GLYPHS]
     wides = [n for n, _ in WIDE]
+    pictures = dict(GLYPHS)
+    pictures.update(WIDE)
+    def height(g):        # lines down to its last drawn one
+        return max(i + 1 for i, row in enumerate(pictures[g]) if any(row))
     def lo(g):
         return names.index(g) * 4 if g in names else WIDE_BASE + 20 * wides.index(g)
     a("bd_moving:            ; 1: the backdrop moves, so it is rebuilt every frame")
     a("    .byte " + ",".join("$%02X" % int(any(t[2] != L_STILL for t in its)) for _, its in BACKDROPS))
-    a("bd_ymin:")
-    a("    .byte " + ",".join("$%02X" % b[0] for b in BACKDROPS))
+    a("bd_zmin:")
+    a("    .byte " + ",".join("$%02X" % (b[0] >> 4) for b in BACKDROPS))
     a("bd_first:")
     a("    .byte " + ",".join("$%02X" % f for f in first))
     for nm, fn in (("bd_x", lambda t: t[0]), ("bd_y", lambda t: t[1] & 0xFF), ("bd_l", lambda t: t[2]),
-                   ("bd_g", lambda t: lo(t[3])), ("bd_pw", lambda t: t[4])):
+                   ("bd_g", lambda t: lo(t[3])), ("bd_pw", lambda t: t[4]),
+                   ("bd_h", lambda t: height(t[3]))):
         a("%s:" % nm)
         for k in range(0, len(items), 16):
             a("    .byte " + ",".join("$%02X" % fn(t) for t in items[k:k + 16]))
@@ -2002,12 +2048,6 @@ def source():
     a("    .byte " + ",".join("G_%s" % t[2] for t in TERRAIN))
     a("terr_pal:")
     a("    .byte " + ",".join("$%02X" % t[3] for t in TERRAIN))
-    a("zone_of:              ; line -> zone, $FF outside zones 1-11")
-    for r in range(0, 256, 32):
-        a("    .byte " + ",".join("$%02X" % (y >> 4 if 16 <= y < 192 else 0xFF) for y in range(r, r + 32)))
-    a("page_of:              ; line -> $E0 + its line within the zone")
-    for r in range(0, 256, 32):
-        a("    .byte " + ",".join("$%02X" % (0xE0 + (y & 15)) for y in range(r, r + 32)))
     a("tables_end:")
     a("    .res $FFFA-tables_end,$00")
     a("    .word nmi")
