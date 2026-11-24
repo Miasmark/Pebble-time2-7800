@@ -23,8 +23,9 @@ Under it all: a cruiser that crosses the bottom once an hour, a step a minute,
 and a lives-and-score bar in character mode -- one life per 20% of battery
 (white; green while charging; red on the last one) and today's steps as the
 1UP score. The cruiser and the lives are the hour's vehicle: ships, rigs,
-planes or landers. With CLK_FLAGS bit 4 set (a wrist flick) and no show on, the digits'
-top rows cycle through the hues.
+planes or landers. The show is the hour's plus CLK_CHANNEL, which the watch
+moves on at each wrist flick; whenever the show changes (a flick, the top of
+the hour, power-on) the picture goes to 0.4 s of TV static first.
 
 Within a second it counts frames, starting again whenever the seconds register
 changes, so it cannot drift from the watch's clock. Real MARIA display lists
@@ -44,6 +45,7 @@ import os
 import sys
 
 ROM_BASE = 0xC000      # code from here
+NOISE = 0xD000         # 16 pages of random bytes for channel-change static
 GFX = 0xE000           # 16 pages: page $E0 + (15 - line) holds line `line` of every glyph
 TABLES = 0xF000        # the display list list and tables
 DL_ZONES = 16          # 16 x 16 lines covers every DMA line (17-258)
@@ -380,6 +382,7 @@ CLK_BATTERY = $0608
 CLK_STEPS_HI = $0609
 CLK_STEPS_MID = $060A
 CLK_STEPS_LO = $060B
+CLK_CHANNEL = $060C
 
 FRAME    = $0080     ; free-running, for flicker only
 LASTSEC  = $0081
@@ -414,6 +417,10 @@ MOFF     = $00AD     ; added to the minutes' x (a shake)
 FRAMEH   = $00AE     ; FRAME's high byte, for the stars' slow layers
 SOFF     = $00AF     ; and $B0, $B1: how far each layer of stars has fallen
 SIDX     = $00B2
+LASTSCENE = $00B3    ; the show last frame, $FF at power-on
+STATIC   = $00B4     ; frames of channel-change static still to show
+RND      = $00B5     ; the static's random bytes (an 8-bit LFSR, never 0)
+STATIC_FRAMES = $18  ; 24 frames, 0.4 s
 """
 
 CODE_ASM = """
@@ -474,6 +481,11 @@ clear:
     STA FRAME
     STA FRAMEH
     STA SUBF
+    STA STATIC
+    LDA #$FF                  ; no show yet: the first frame changes channel,
+    STA LASTSCENE             ; so the set warms up through static
+    LDA #$A7
+    STA RND
     LDA #CH_SPACE             ; the bar's character maps start blank
     LDX #$1F
 blank_maps:
@@ -546,10 +558,45 @@ stage_done:
     SBC #$1E
 local_ok:
     STA LOCAL
-    LDA CLK_HOUR              ; this hour's show
-    JSR bcd_to_bin
+    LDA CLK_HOUR              ; this hour's show, moved on by the channel the
+    JSR bcd_to_bin            ; wearer has flicked to
+    CLC
+    ADC CLK_CHANNEL
     AND #$03
     STA SCENE
+
+    ; ---- a new show comes in through static, which needs holey DMA off ----
+    CMP LASTSCENE
+    BEQ same_show
+    STA LASTSCENE
+    LDA #STATIC_FRAMES
+    STA STATIC
+same_show:
+    LDA STATIC
+    BEQ picture_dll
+    LDA #>dll_static
+    STA DPPH
+    LDA #<dll_static
+    STA DPPL
+    LDA #$06                  ; palette 6 turns to the static's greys
+    STA P6C1
+    LDA #$0A
+    STA P6C2
+    LDA #$0F
+    STA P6C3
+    JMP dll_set
+picture_dll:
+    LDA #>dll
+    STA DPPH
+    LDA #<dll
+    STA DPPL
+    LDA #$14
+    STA P6C1                  ; dunes: olive
+    LDA #$1A
+    STA P6C2                  ; gold
+    LDA #$18
+    STA P6C3                  ; sand
+dll_set:
     LDA CLK_MIN
     JSR bcd_to_bin
     STA MINB
@@ -568,6 +615,13 @@ empty:
     INX
     CPX #$0C
     BNE empty
+
+    LDA STATIC
+    BEQ picture_on
+    DEC STATIC
+    JSR draw_static
+    JMP the_bar
+picture_on:
 
     ; ---- the formation hour flies through stars, behind everything else ----
     LDA SCENE
@@ -597,22 +651,7 @@ no_stars:
     LDA #G_COLON
     JSR add_obj
 
-    ; ---- colours; a wrist flick with no show on cycles the hues ----
     JSR digit_colours
-    LDA STAGE
-    CMP #$FF
-    BNE no_look
-    LDA CLK_FLAGS
-    AND #$10
-    BEQ no_look
-    LDA FRAME
-    ASL
-    ASL
-    AND #$F0
-    ORA #$0C
-    STA P0C3
-    STA P2C3
-no_look:
 
     ; ---- this hour's show draws the minutes and its actors ----
     LDA SCENE
@@ -643,6 +682,7 @@ scene_return:
     JSR add_obj
 
     ; ---- the bar: lives = battery in 20% steps (at least 1, at most 5) ----
+the_bar:
     LDX #$00
     LDA CLK_BATTERY
 count_lives:
@@ -1233,6 +1273,55 @@ star_next:
     BPL star_loop
     RTS
 
+; channel-change static: two 80-pixel entries a zone over 4K of random bytes,
+; from new random places every frame
+draw_static:
+    LDX #$01
+static_zone:
+    JSR set_ptr
+    LDY #$00
+    JSR rnd
+    STA (PTR),Y
+    INY
+    LDA #$CC                  ; palette 6, 20 bytes wide
+    STA (PTR),Y
+    INY
+    LDA #>noise
+    STA (PTR),Y
+    INY
+    LDA #$00
+    STA (PTR),Y
+    INY
+    JSR rnd
+    STA (PTR),Y
+    INY
+    LDA #$CC
+    STA (PTR),Y
+    INY
+    LDA #>noise
+    STA (PTR),Y
+    INY
+    LDA #$50
+    STA (PTR),Y
+    INY
+    INY
+    LDA #$00                  ; the end of the list
+    STA (PTR),Y
+    INX
+    CPX #$0C
+    BNE static_zone
+    RTS
+
+; the next random byte
+rnd:
+    LDA RND
+    ASL
+    BCC rnd_done
+    EOR #$1D
+rnd_done:
+    STA RND
+    RTS
+
 ; PTR = zone X's display list
 set_ptr:
     LDA zlo,X
@@ -1477,7 +1566,15 @@ def source():
     a("    .org $%04X" % ROM_BASE)
     a(CODE_ASM.strip().replace("SHOOTER_CODE", SHOOTER.rstrip("\n")))
     a("code_end:")
-    a("    .res $%04X-code_end,$00" % GFX)
+    a("    .res $%04X-code_end,$00" % NOISE)
+    a("noise:                ; the static: 16 pages of random bytes")
+    seed = 7800
+    for _ in range(4096 // 32):
+        row = []
+        for _ in range(32):
+            seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+            row.append((seed >> 16) & 0xFF)
+        a("    .byte " + ",".join("$%02X" % b for b in row))
     a("gfx:")
     for page in range(16):
         line = 15 - page          # MARIA reads page (high + offset); offset counts 15..0
@@ -1495,6 +1592,10 @@ def source():
     for z in range(DL_ZONES):
         dl = DLBASE + z * DL_STRIDE
         a("    .byte $4F,$%02X,$%02X" % (dl >> 8, dl & 0xFF))
+    a("dll_static:           ; the same zones with holey DMA off, for the static")
+    for z in range(DL_ZONES):
+        dl = DLBASE + z * DL_STRIDE
+        a("    .byte $0F,$%02X,$%02X" % (dl >> 8, dl & 0xFF))
     a("zlo:")
     a("    .byte " + ",".join("$%02X" % ((DLBASE + z * DL_STRIDE) & 0xFF) for z in range(DL_ZONES)))
     a("zhi:")

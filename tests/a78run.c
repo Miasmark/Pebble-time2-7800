@@ -12,6 +12,8 @@
 //     -b PCT       battery percent (CLK_BATTERY, default 100)
 //     -S STEPS     today's steps (CLK_STEPS, default 0)
 //     -g           charging (CLK_FLAGS bit 5)
+//     -C N         the channel (CLK_CHANNEL, 0-3)
+//     -k F,G,...   flick at these frames: the channel moves on by one
 //     -e N         snapshot every Nth frame (with -s FIRST,LAST as the range)
 //     -i FILE      input clip: one byte per frame, b7-4 SWCHA P0 bits, b0 fire
 //     -q           quiet
@@ -65,7 +67,8 @@ int main(int argc, char **argv) {
   int noskip = 0, look = 0, every = 0, battery = 100, charging = 0;
   long steps = 0;
   long run_clock = -1;
-  int frames = 60, quiet = 0, clock_hhmm = -1, probe = -1;
+  int frames = 60, quiet = 0, clock_hhmm = -1, probe = -1, channel = 0;
+  const char *flicks = "";
   const char *snaps = "", *prefix = "frame", *ramfile = NULL, *inpfile = NULL;
   for (int i = 2; i < argc; i++) {
     if (!strcmp(argv[i], "-f")) frames = atoi(argv[++i]);
@@ -82,6 +85,8 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "-b")) battery = atoi(argv[++i]);
     else if (!strcmp(argv[i], "-S")) steps = atol(argv[++i]);
     else if (!strcmp(argv[i], "-g")) charging = 1;
+    else if (!strcmp(argv[i], "-C")) channel = atoi(argv[++i]) & 3;
+    else if (!strcmp(argv[i], "-k")) flicks = argv[++i];
     else if (!strcmp(argv[i], "-e")) every = atoi(argv[++i]);
     else if (!strcmp(argv[i], "-p")) probe = (int)strtol(argv[++i], NULL, 16);
   }
@@ -136,6 +141,13 @@ int main(int argc, char **argv) {
       m.clock[A7800_CLK_MIN] = bcd((int)((secs / 60) % 60));
       m.clock[A7800_CLK_SEC] = bcd((int)(secs % 60));
     }
+    {
+      char key[16], list[512];
+      snprintf(key, sizeof(key), ",%d,", fr);
+      snprintf(list, sizeof(list), ",%s,", flicks);
+      if (strstr(list, key)) channel = (channel + 1) & 3;
+    }
+    m.clock[A7800_CLK_CHANNEL] = (uint8_t)channel;
     a7800_run_frame(&m);
     if (probe >= 0 && fr + 1 > 120 && fr + 1 <= 200) {
       samples[nsamples++] = m.ram[0x800 + probe] | (m.ram[0x800 + probe + 1] << 8);

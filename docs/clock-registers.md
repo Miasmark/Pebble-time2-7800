@@ -32,7 +32,8 @@ All values are BCD unless marked binary.
 | `$0607` | `CLK_FLAGS` | b7 the wearer prefers a 12-hour clock, b6 phone linked, b5 charging, b4 this burst came from a wrist flick (the only input a watch face gets) |
 | `$0608` | `CLK_BATTERY` | battery percent, binary 0-100 |
 | `$0609-$060B` | `CLK_STEPS` | steps today, six BCD digits, high byte first |
-| `$060C-$060E` | | reserved, read 0 |
+| `$060C` | `CLK_CHANNEL` | the channel, binary 0-3: the watch moves it on by one at each wrist flick (and remembers it). The clock stub shows hour + channel, mod 4 |
+| `$060D-$060E` | | reserved, read 0 |
 | `$060F` | `CLK_ID` | `$5A` when the block is present |
 
 The watch updates the block between frames, once a minute while the face is

@@ -8,7 +8,14 @@ anniversary banner and the date on the glass.
 
 ![The four hourly shows, :57 to :03](docs/four-shows.gif)
 
-| hour mod 4 | show, :57 to :02 |
+A wrist flick changes the channel: a moment of TV static, then the next show
+(and its cruiser and lives), which then carries on rotating hourly from there.
+The face remembers the channel. A new show always comes in through static: at
+a flick, at the top of the hour, and when the face starts.
+
+![Three flicks: static, then the drill rig, the bomber run and the lander](docs/channel-change.gif)
+
+| (hour + channel) mod 4 | show, :57 to :02 |
 |---|---|
 | 0 | **formation** -- two attackers fly in, three volleys, the old minute explodes, the new one fades in; all of it over a three-layer star field falling behind ([closer look](docs/starfield.gif)) |
 | 1 | **drill rig** -- a rig bores up through the rock, the old minute shakes and crumbles, the rig pushes the new one up into place |
@@ -59,7 +66,7 @@ hour's stars are drawn in palette 7 for that reason.
 | `docs/clock-registers.md` | The read-only block at `$0600-$060F` through which the watch tells a ROM the time (clear of every mapper and add-on, so any cartridge size keeps it). |
 | `tests/harte_pack.py`, `tests/harte_run.c` | Tom Harte's SingleStepTests for the 6502: 10,000 cases for each of the 256 opcodes, checking registers, memory and cycle counts. |
 | `tests/klaus_run.c` | Klaus Dormann's 6502 functional test. |
-| `tests/a78run.c` | Runs a cartridge on the watch core on the host: frames to PPM, RAM dumps, per-frame CPU/DMA/WSYNC time, the clock registers standing (`-c HHMM`) or running (`-t HHMMSS`), the wrist-flick flag (`-l`), battery (`-b`), steps (`-S`), charging (`-g`). |
+| `tests/a78run.c` | Runs a cartridge on the watch core on the host: frames to PPM, RAM dumps, per-frame CPU/DMA/WSYNC time, the clock registers standing (`-c HHMM`) or running (`-t HHMMSS`), the wrist-flick flag (`-l`), battery (`-b`), steps (`-S`), charging (`-g`), the channel (`-C`) and flicks that move it on (`-k`). |
 | `tests/vbprobe.c` | Reports how far into the frame a cartridge's main loop runs before it is done (the line its PC first reaches a given address), so the display lists are known to be ready before MARIA reads them. |
 | `tests/riot_check.py` | The toolkit's RIOT test cart against MAME's golden RAM dump, by the toolkit selftest's own rule. |
 | `tests/dma_fit.py` | Runs the toolkit's DMA cost cartridges on the core and fits the same model `dmameasure.py --fit` fits to MAME. |

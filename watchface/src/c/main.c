@@ -6,6 +6,8 @@
 // registers at $0600 (docs/clock-registers.md at the top of this repo) and runs
 // EMU_FRAMES_PER_DRAW 7800 frames per watch frame during an animation burst,
 // one draw a minute otherwise. Each 30 draws it logs how long a draw took.
+// A wrist flick changes the channel: the cartridge's show moves on by one
+// (static, then the next show), and the choice is kept across restarts.
 //
 // With USE_EMULATOR at 0, the hand-built hourly scenes below are drawn instead.
 //
@@ -638,6 +640,13 @@ static AppTimer *s_timer;
 static int s_frames_left;
 static AppTimer *s_preminute_timer;
 static bool s_look;            // this burst came from a wrist flick
+// the channel: each wrist flick moves the show on by one (the cartridge shows
+// hour + channel, mod 4); kept across restarts
+#define PERSIST_CHANNEL 1
+#define FLICK_GAP_MS 1500       // taps closer together than this are one flick
+static int s_channel;
+static time_t s_flick_s;
+static uint16_t s_flick_ms;
 // what the cartridge is shown: battery and steps are taken once, as a burst
 // starts, so the bar and the score change at most once a burst
 static BatteryChargeState s_battery_shown;
@@ -814,6 +823,8 @@ static void emu_set_clock(void) {
   c[A7800_CLK_STEPS_HI] = bcd(st / 10000);
   c[A7800_CLK_STEPS_MID] = bcd((st / 100) % 100);
   c[A7800_CLK_STEPS_LO] = bcd(st % 100);
+  c[A7800_CLK_CHANNEL] = (uint8_t)s_channel;
+  s_scene = (t->tm_hour + s_channel) % 4;    // the channel knob points at it
 }
 
 #define OV_BANNER_ROWS 56       // the banner's rows: the cartridge draws over them
@@ -1243,6 +1254,19 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
 }
 
 static void tap_handler(AccelAxisType axis, int32_t direction) {
+#if USE_EMULATOR
+  // change the channel: the cartridge shows static, then the next show
+  time_t now;
+  uint16_t ms;
+  time_ms(&now, &ms);
+  int32_t since = (int32_t)(now - s_flick_s) * 1000 + (int32_t)ms - (int32_t)s_flick_ms;
+  if (s_flick_s == 0 || since < 0 || since >= FLICK_GAP_MS) {
+    s_channel = (s_channel + 1) & 3;
+    persist_write_int(PERSIST_CHANNEL, s_channel);
+    s_flick_s = now;
+    s_flick_ms = ms;
+  }
+#endif
   s_look = true;              // the cartridge sees CLK_FLAGS bit 4 for this burst
   start_burst_frames(BURST_FRAMES);
 }
@@ -1299,6 +1323,9 @@ static void init(void) {
   s_connected = connection_service_peek_pebble_app_connection();
   update_steps();
 #if USE_EMULATOR
+  if (persist_exists(PERSIST_CHANNEL)) {
+    s_channel = (int)persist_read_int(PERSIST_CHANNEL) & 3;
+  }
   emu_init();
 #endif
 
