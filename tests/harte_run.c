@@ -1,6 +1,6 @@
 // Runs packed Harte SingleStepTests against the watch's m6502 core.
 //
-//   cc -O2 -I<watch>/src/c/emu tests/harte_run.c <watch>/src/c/emu/m6502.c -o build/harte_run
+//   cc -O2 -Iwatchface/src/c/emu tests/harte_run.c watchface/src/c/emu/m6502.c -o build/harte_run
 //   build/harte_run build/harte            (all opcodes)
 //   build/harte_run build/harte a9 6d      (some)
 //

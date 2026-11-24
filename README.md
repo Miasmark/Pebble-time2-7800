@@ -1,16 +1,36 @@
-# a7800-pebble-tools
+# Pebble Time 2 7800
 
-Build scripts and tests for running small 7800 cartridges on a Pebble Time 2
-watch face. The watch side (the 6502 and MARIA core, `src/c/emu`) lives in the
-watch face project; this repo builds what it runs and checks that it runs it
-correctly.
+A watch face for the Pebble Time 2 that celebrates the Atari 7800's 40th
+anniversary by running a real 7800 cartridge: a silent 6502 and MARIA, written
+for the watch, play an 8K cartridge that draws the time and stages every
+minute change by itself. The face puts it in an old TV in 7800 dress, with the
+anniversary banner and the date on the glass.
 
-It leans on two other repos and expects them checked out beside it:
+![The minute change, :57 to :03](docs/minute-change.gif)
 
-- **a7800-toolkit** — the assembler (`tools/asm.py`), `newgame.header()`, the
-  opcode table the core's tables are generated from (`tools/m6502.py`), the
-  RIOT test cart and MAME's golden dump of it, and the DMA cost cartridges.
-- **the watch face** (`atari7800-40th`) — `src/c/emu`, which the tests compile.
+- `watchface/` — the Pebble project. The 7800 is `watchface/src/c/emu`; the
+  cartridge it runs is `watchface/resources/data/clockstub.a78`.
+- `tools/`, `tests/`, `docs/` — what builds the cartridge and the core's
+  tables, and the checks that the core behaves like the 7800 (and the a7800
+  fork of MAME).
+
+The build scripts lean on the **a7800-toolkit** repo, checked out beside this
+one: its assembler (`tools/asm.py`), `newgame.header()`, the opcode table the
+core's tables are generated from (`tools/m6502.py`), the RIOT test cart with
+MAME's golden dump of it, and the DMA cost cartridges.
+
+## The watch face
+
+```
+cd watchface
+pebble build
+pebble install --emulator emery      # or --phone <ip>
+```
+
+`USE_EMULATOR` at the top of `watchface/src/c/main.c` picks the cartridge (1)
+or the earlier hand-drawn hourly scenes (0). `EMU_FRAMES_PER_DRAW` sets how
+many 7800 frames run per watch frame (4 is real time); the face logs the
+milliseconds a draw takes every 30 draws.
 
 ## What is here
 
@@ -45,14 +65,14 @@ fork charged 17"), which leaves the 6502's NMI entry and `RTI`, 13 cycles. The
 ```
 # the opcode tables (only when the toolkit's m6502.py changes)
 python tools/gen_m6502_tables.py --toolkit ../a7800-toolkit \
-    -o ../atari7800-40th/src/c/emu/m6502_tables.h
+    -o watchface/src/c/emu/m6502_tables.h
 
-# the stub, then into the watch project's resources
+# the stub, then into the watch face's resources
 python tools/mkstub.py --toolkit ../a7800-toolkit -o build/clockstub.a78
-cp build/clockstub.a78 ../atari7800-40th/resources/data/
+cp build/clockstub.a78 watchface/resources/data/
 
 # the host runner
-W=../atari7800-40th/src/c/emu
+W=watchface/src/c/emu
 cc -O2 -I$W tests/a78run.c $W/a7800.c $W/m6502.c $W/palette7800.c -o build/a78run
 build/a78run build/clockstub.a78 -f 480 -t 202656 -s 0,479 -e 4   # :56 to :04, every 4th frame
 

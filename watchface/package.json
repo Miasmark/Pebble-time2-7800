@@ -1,0 +1,35 @@
+{
+  "name": "atari7800-40th",
+  "author": "Your Name",
+  "version": "1.0.0",
+  "keywords": [
+    "pebble-app"
+  ],
+  "private": true,
+  "dependencies": {},
+  "pebble": {
+    "displayName": "7800 40th",
+    "uuid": "ef06ff17-fb26-4315-801f-15c8fc6ccb22",
+    "sdkVersion": "3",
+    "enableMultiJS": false,
+    "targetPlatforms": [
+      "emery"
+    ],
+    "watchapp": {
+      "watchface": true
+    },
+    "capabilities": [
+      "health"
+    ],
+    "messageKeys": [],
+    "resources": {
+      "media": [
+        {
+          "type": "raw",
+          "name": "STUB_ROM",
+          "file": "data/clockstub.a78"
+        }
+      ]
+    }
+  }
+}

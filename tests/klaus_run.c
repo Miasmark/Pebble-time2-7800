@@ -1,6 +1,6 @@
 // Klaus Dormann's 6502 functional test against the watch's m6502 core.
 //
-//   cc -O2 -I<watch>/src/c/emu tests/klaus_run.c <watch>/src/c/emu/m6502.c -o build/klaus_run
+//   cc -O2 -Iwatchface/src/c/emu tests/klaus_run.c watchface/src/c/emu/m6502.c -o build/klaus_run
 //   build/klaus_run 6502_functional_test.bin [success_pc]
 //
 // The test loops on `JMP *` when it finishes; $3469 is success in the stock
