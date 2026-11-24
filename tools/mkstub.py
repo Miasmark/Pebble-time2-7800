@@ -162,13 +162,13 @@ BOULDER = [  # palette 5; starts 4 lines down
     "..111222222111..",
     "....11111111....",
 ]
-DUNE = [   # palette 6: olive, gold, sand; starts 5 lines down
-    "......2222......",
-    "....22222222....",
-    "..222233332222..",
-    ".22233311133322.",
-    "2223311111113322",
-    "3311111111111133",
+DUNE = [   # palette 6: gold rim, sand (colour 2 is black, for the bar); starts 5 lines down
+    "......1111......",
+    "....11111111....",
+    "..111133331111..",
+    ".11133333333311.",
+    "1113333333333311",
+    "3333333333333333",
 ]
 LANDER = [  # palette 1
     "......2222......",
@@ -591,10 +591,12 @@ BACKDROPS = [
 # so check that the ones that must differ still do through its table
 # (palette7800.c): $12 and $14, say, both come out dark olive
 SHOW_COLOURS = [
-    (0x00, 0x22, 0x24, 0x06, 0x14, 0x1A, 0x18, 0x86, 0x0A, 0x0F),   # formation: space
+    # palette 6 colour 2 is black in every show: the bar's background (and the
+    # drill's sky and shaft)
+    (0x00, 0x22, 0x24, 0x06, 0x1A, 0x00, 0x18, 0x86, 0x0A, 0x0F),   # formation: space
     (0x12, 0x22, 0x24, 0x06, 0x20, 0x00, 0x20, 0x32, 0x24, 0x0A),   # drill: under ground (6: the shaft)
-    (0xC2, 0x22, 0x24, 0x06, 0x14, 0x1A, 0x18, 0xD4, 0xF8, 0x34),   # bomber: farmland
-    (0x00, 0x04, 0x08, 0x0E, 0x14, 0x1A, 0x18, 0x84, 0xC8, 0x0F),   # lander: the moon
+    (0xC2, 0x22, 0x24, 0x06, 0x1A, 0x00, 0x18, 0xD4, 0xF8, 0x34),   # bomber: farmland
+    (0x00, 0x04, 0x08, 0x0E, 0x1A, 0x00, 0x18, 0x84, 0xC8, 0x0F),   # lander: the moon
 ]
 
 
@@ -839,13 +841,19 @@ blank_maps:
     STA MAP1,X
     DEX
     BPL blank_maps
-    LDX #$00                  ; zone 12's list, which never changes
-hud_list:
+    LDX #$00                  ; zone 12's list, which never changes: a black
+hud_list:                     ; band, then the lives, HI and 1UP
     LDA hud_dl_init,X
     STA HUD_DL,X
     INX
-    CPX #$0F
+    CPX #$17
     BNE hud_list
+    LDX #$07                  ; and zone 13, under the bar: the black band alone
+under_bar:
+    LDA hud_dl_init,X
+    STA HUD_DL+DL_STRIDE_ASM,X
+    DEX
+    BPL under_bar
     LDA #>gfx2                ; characters come from the second graphics block
     STA CHARBASE
     LDA #$36
@@ -978,11 +986,9 @@ dll_pick:
     INX                       ; ... and holey DMA off for the static
     INX
     LDA #$00
-    STA SHADOW                ; black behind it, palette 6 its greys
-    LDA #$06
+    STA SHADOW                ; black behind it, palette 6 its greys (colour 2
+    LDA #$06                  ; stays black, for the bar)
     STA SHADOW+4
-    LDA #$0A
-    STA SHADOW+5
     LDA #$0F
     STA SHADOW+6
 dll_picked:
@@ -2517,7 +2523,11 @@ def source():
     a("    .byte " + ",".join("$%02X" % ((DLBASE + z * DL_STRIDE) & 0xFF) for z in range(DL_ZONES)))
     a("zhi:")
     a("    .byte " + ",".join("$%02X" % ((DLBASE + z * DL_STRIDE) >> 8) for z in range(DL_ZONES)))
-    a("hud_dl_init:          ; character-mode entries, palette 4: lives, HI, 1UP")
+    a("DL_STRIDE_ASM = $%02X" % DL_STRIDE)
+    a("hud_dl_init:          ; the black band (palette 6 colour 2), then character-mode")
+    a("                      ; entries, palette 4: lives, HI, 1UP")
+    a("    .byte BAND,$%02X,>gfx2,$00" % pw(6, 20))
+    a("    .byte BAND,$%02X,>gfx2,$50" % pw(6, 20))
     a("    .byte $%02X,$60,$%02X,$96,$08" % (MAP1 & 0xFF, MAP1 >> 8))
     a("    .byte $%02X,$60,$%02X,$97,$3C" % (MAP3 & 0xFF, MAP3 >> 8))
     a("    .byte $%02X,$60,$%02X,$96,$70" % (MAP2 & 0xFF, MAP2 >> 8))
