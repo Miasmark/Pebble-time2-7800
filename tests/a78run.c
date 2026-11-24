@@ -9,6 +9,9 @@
 //     -c HHMM      set the clock registers to this time (stands still)
 //     -t HHMMSS    set the clock and let it run: a second every 60 frames
 //     -l           set CLK_FLAGS bit 4 (the wearer flicked their wrist)
+//     -b PCT       battery percent (CLK_BATTERY, default 100)
+//     -S STEPS     today's steps (CLK_STEPS, default 0)
+//     -g           charging (CLK_FLAGS bit 5)
 //     -e N         snapshot every Nth frame (with -s FIRST,LAST as the range)
 //     -i FILE      input clip: one byte per frame, b7-4 SWCHA P0 bits, b0 fire
 //     -q           quiet
@@ -59,7 +62,8 @@ int main(int argc, char **argv) {
     fprintf(stderr, "usage: %s game.a78 [-f N] [-s N,M] [-o PREFIX] [-r FILE] [-w FIRST] [-c HHMM] [-i FILE] [-q]\n", argv[0]);
     return 2;
   }
-  int noskip = 0, look = 0, every = 0;
+  int noskip = 0, look = 0, every = 0, battery = 100, charging = 0;
+  long steps = 0;
   long run_clock = -1;
   int frames = 60, quiet = 0, clock_hhmm = -1, probe = -1;
   const char *snaps = "", *prefix = "frame", *ramfile = NULL, *inpfile = NULL;
@@ -75,6 +79,9 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "-n")) noskip = 1;
     else if (!strcmp(argv[i], "-t")) run_clock = atol(argv[++i]);
     else if (!strcmp(argv[i], "-l")) look = 1;
+    else if (!strcmp(argv[i], "-b")) battery = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "-S")) steps = atol(argv[++i]);
+    else if (!strcmp(argv[i], "-g")) charging = 1;
     else if (!strcmp(argv[i], "-e")) every = atoi(argv[++i]);
     else if (!strcmp(argv[i], "-p")) probe = (int)strtol(argv[++i], NULL, 16);
   }
@@ -109,6 +116,11 @@ int main(int argc, char **argv) {
   }
 
   if (look) m.clock[A7800_CLK_FLAGS] |= 0x10;
+  if (charging) m.clock[A7800_CLK_FLAGS] |= 0x20;
+  m.clock[A7800_CLK_BATTERY] = (uint8_t)battery;
+  m.clock[A7800_CLK_STEPS_HI] = bcd((int)(steps / 10000 % 100));
+  m.clock[A7800_CLK_STEPS_MID] = bcd((int)(steps / 100 % 100));
+  m.clock[A7800_CLK_STEPS_LO] = bcd((int)(steps % 100));
   int samples[128], nsamples = 0;
   if (probe >= 0 && frames < 201) frames = 201;
   clock_t t0 = clock();

@@ -31,5 +31,8 @@ change in that window; a wrist flick starts a six-second burst with b4 set. A RO
 frame and draw from it, so that a single frame after a long sleep already shows
 the right state.
 
+Battery and steps (and the charging bit) are taken once, as a burst starts,
+and held for the burst.
+
 Because the watch runs only short bursts of frames, a ROM should never count
 frames to keep time: the seconds register is the clock.

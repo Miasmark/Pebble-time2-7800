@@ -638,6 +638,10 @@ static AppTimer *s_timer;
 static int s_frames_left;
 static AppTimer *s_preminute_timer;
 static bool s_look;            // this burst came from a wrist flick
+// what the cartridge is shown: battery and steps are taken once, as a burst
+// starts, so the bar and the score change at most once a burst
+static BatteryChargeState s_battery_shown;
+static int s_steps_shown;
 static uint8_t s_regs_base[NUM_REGS];
 
 static const char *DAYS[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
@@ -804,9 +808,9 @@ static void emu_set_clock(void) {
   c[A7800_CLK_MONTH] = bcd(t->tm_mon + 1);
   c[A7800_CLK_YEAR] = bcd(t->tm_year % 100);
   c[A7800_CLK_FLAGS] = (uint8_t)((clock_is_24h_style() ? 0 : 0x80) | (s_connected ? 0x40 : 0) |
-                                 (s_battery.is_charging ? 0x20 : 0) | (s_look ? 0x10 : 0));
-  c[A7800_CLK_BATTERY] = s_battery.charge_percent;
-  int st = s_steps % 1000000;
+                                 (s_battery_shown.is_charging ? 0x20 : 0) | (s_look ? 0x10 : 0));
+  c[A7800_CLK_BATTERY] = s_battery_shown.charge_percent;
+  int st = s_steps_shown % 1000000;
   c[A7800_CLK_STEPS_HI] = bcd(st / 10000);
   c[A7800_CLK_STEPS_MID] = bcd((st / 100) % 100);
   c[A7800_CLK_STEPS_LO] = bcd(st % 100);
@@ -852,9 +856,9 @@ static void emu_init(void) {
 // ---- the overlay: the face's banner and date, over the cartridge's picture ----
 // Drawn straight into the tube after the 7800's frame, in MARIA colour bytes
 // through the same palette, so it looks like part of the screen. The cartridge
-// keeps these rows empty: the banner sits over zones 2-4, the date over 12-13.
+// keeps these rows empty: the banner sits over zones 2-4, the date over zone 10.
 
-#define OV_DATE_Y 172
+#define OV_DATE_Y 137           // zone 10, between the attackers and the cruiser
 
 static void ov_px(GBitmap *fb, int x, int y, uint8_t colour) {
   if (x < 0 || x >= MW || y < 0 || y >= MH) {
@@ -919,7 +923,7 @@ static void overlay_draw(GBitmap *fb) {
   }
   ov_text_centered(fb, years, 41, 1, 0x9E);
 
-  // the date, below the cruiser's lane
+  // the date, between the attackers' station and the cruiser's lane
   time_t now = time(NULL);
   struct tm *t = localtime(&now);
   char date[16];
@@ -1127,7 +1131,15 @@ static void frame_tick(void *data) {
   }
 }
 
+static void latch_shown_values(void) {
+  s_battery_shown = s_battery;
+  s_steps_shown = s_steps;
+}
+
 static void start_burst_frames(int frames) {
+  if (!s_timer) {
+    latch_shown_values();     // a new burst: the bar and score may move now
+  }
   if (frames > s_frames_left) {
     s_frames_left = frames;
   }
@@ -1162,6 +1174,7 @@ static void preminute_fired(void *data) {
 #endif
 
 static void start_burst(void) {
+  latch_shown_values();
   s_frames_left = BURST_FRAMES;
   if (!s_timer) {
     s_timer = app_timer_register(FRAME_MS, frame_tick, NULL);
@@ -1183,6 +1196,9 @@ static void update_steps(void) {
 
 static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   update_steps();
+#if USE_EMULATOR
+  return;   // the :57 burst has already drawn this minute's change
+#endif
   if (!s_timer) {
     s_frame += 12;    // keep the playfield drifting between bursts
   }
@@ -1196,6 +1212,9 @@ static void tap_handler(AccelAxisType axis, int32_t direction) {
 
 static void battery_handler(BatteryChargeState state) {
   s_battery = state;
+#if USE_EMULATOR
+  return;   // shown from the next burst
+#endif
   refresh();
 }
 
@@ -1204,6 +1223,9 @@ static void connection_handler(bool connected) {
     vibes_double_pulse();
   }
   s_connected = connected;
+#if USE_EMULATOR
+  return;   // the vibration says it now; the power light catches up at the next burst
+#endif
   refresh();
 }
 
@@ -1211,7 +1233,9 @@ static void connection_handler(bool connected) {
 static void health_handler(HealthEventType event, void *context) {
   if (event == HealthEventMovementUpdate || event == HealthEventSignificantUpdate) {
     update_steps();
+#if !USE_EMULATOR
     refresh();
+#endif
   }
 }
 #endif
