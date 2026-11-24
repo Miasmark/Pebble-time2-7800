@@ -10,7 +10,7 @@ anniversary banner and the date on the glass.
 
 | hour mod 4 | show, :57 to :02 |
 |---|---|
-| 0 | **formation** -- two attackers fly in, three volleys, the old minute explodes, the new one fades in |
+| 0 | **formation** -- two attackers fly in, three volleys, the old minute explodes, the new one fades in; all of it over a three-layer star field falling behind ([closer look](docs/starfield.gif)) |
 | 1 | **drill rig** -- a rig bores up through the rock, the old minute shakes and crumbles, the rig pushes the new one up into place |
 | 2 | **bomber run** -- the ground scrolls, a bomber climbs in and its bomb takes out the old minute; the new one fades in as it flies off |
 | 3 | **lander** -- a lander comes down, lifts the old minute away and sets the new one down in a puff of dust |
@@ -45,6 +45,11 @@ are recorded when they change but drawn from the next burst; battery and steps
 are read once as a burst starts, so the bar and the score move at most once a
 burst. A lost phone link still vibrates at once.
 
+The cartridge draws in front of the banner (its background colour is
+see-through there), except palette 7: that is the backdrop, and it passes behind
+the banner, showing only where the banner leaves the tube black. The formation
+hour's stars are drawn in palette 7 for that reason.
+
 ## What is here
 
 | | |
@@ -55,6 +60,7 @@ burst. A lost phone link still vibrates at once.
 | `tests/harte_pack.py`, `tests/harte_run.c` | Tom Harte's SingleStepTests for the 6502: 10,000 cases for each of the 256 opcodes, checking registers, memory and cycle counts. |
 | `tests/klaus_run.c` | Klaus Dormann's 6502 functional test. |
 | `tests/a78run.c` | Runs a cartridge on the watch core on the host: frames to PPM, RAM dumps, per-frame CPU/DMA/WSYNC time, the clock registers standing (`-c HHMM`) or running (`-t HHMMSS`), the wrist-flick flag (`-l`), battery (`-b`), steps (`-S`), charging (`-g`). |
+| `tests/vbprobe.c` | Reports how far into the frame a cartridge's main loop runs before it is done (the line its PC first reaches a given address), so the display lists are known to be ready before MARIA reads them. |
 | `tests/riot_check.py` | The toolkit's RIOT test cart against MAME's golden RAM dump, by the toolkit selftest's own rule. |
 | `tests/dma_fit.py` | Runs the toolkit's DMA cost cartridges on the core and fits the same model `dmameasure.py --fit` fits to MAME. |
 

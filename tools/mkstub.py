@@ -9,7 +9,8 @@ bursts of frames and sleeps in between. Each hour (hour mod 4) has its own show,
 from :57 to :02:
 
     0  formation   two attackers fly in, three volleys, the old minute explodes,
-                   the new one fades in, they leave
+                   the new one fades in, they leave -- all through a falling
+                   three-layer star field
     1  drill rig   a rig bores up through the rock under the clock, the old
                    minute shakes and crumbles, the rig pushes the new one up
                    into place and sinks away
@@ -237,6 +238,34 @@ def boom_lines(frame):
     return lines
 
 
+def star_lines(layer):
+    """The formation hour's backdrop, palette 7, drawn one byte wide: a far star is
+    one dim pixel, a middle one a grey pixel, a near one a 2-line streak falling
+    head first (white head under a grey tail)."""
+    lines = blank()
+    if layer < 2:
+        lines[0][0] = layer + 1
+    else:
+        lines[0][0], lines[1][0] = 2, 3
+    return lines
+
+
+# the star field: (x, base line, layer), 8 per layer. Lines count from zone 0's
+# top and wrap at 256; a star shows while its line is 16-191 (zones 1-11)
+def star_table():
+    seed, out = 1986, []
+    for layer in range(3):
+        for i in range(8):
+            seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+            x = 2 + i * 20 + (seed >> 12) % 17          # one per 20-pixel column
+            seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+            out.append((x, (seed >> 9) & 0xFF, layer))
+    return out
+
+
+STARS = star_table()
+
+
 def build_glyphs():
     g = [("D%d" % d, glyph_lines(rows)) for d, rows in enumerate(BIG_DIGITS)]
     g += [("COLON", glyph_lines(COLON)), ("SHIP", picture(SHIP, 4))]
@@ -246,6 +275,7 @@ def build_glyphs():
           ("PLANE", picture(PLANE)), ("BOMB", picture(BOMB, 6)), ("BOULDER", picture(BOULDER, 4)),
           ("DUNE", picture(DUNE, 5)), ("LANDER", picture(LANDER)), ("FLAME0", picture(FLAME[0])),
           ("FLAME1", picture(FLAME[1])), ("DUST", picture(DUST, 10))]
+    g += [("STAR%d" % k, star_lines(k)) for k in range(3)]
     return g
 
 
@@ -339,6 +369,9 @@ P6C1     = $39
 P6C2     = $3A
 P6C3     = $3B
 CTRL     = $3C
+P7C1     = $3D
+P7C2     = $3E
+P7C3     = $3F
 CLK_SEC  = $0600     ; the clock registers: docs/clock-registers.md
 CLK_MIN  = $0601
 CLK_HOUR = $0602
@@ -378,6 +411,9 @@ TMP_Y    = $00AA
 SCRL     = $00AB
 CARRY    = $00AC
 MOFF     = $00AD     ; added to the minutes' x (a shake)
+FRAMEH   = $00AE     ; FRAME's high byte, for the stars' slow layers
+SOFF     = $00AF     ; and $B0, $B1: how far each layer of stars has fallen
+SIDX     = $00B2
 """
 
 CODE_ASM = """
@@ -420,6 +456,12 @@ reset:
     STA P6C2                  ; gold
     LDA #$18
     STA P6C3                  ; sand
+    LDA #$86
+    STA P7C1                  ; stars: dim blue
+    LDA #$0A
+    STA P7C2                  ; grey
+    LDA #$0F
+    STA P7C3                  ; white (the watch puts palette 7 behind its banner)
     LDA #$00
     TAX
 clear:
@@ -430,6 +472,7 @@ clear:
     INX
     BNE clear
     STA FRAME
+    STA FRAMEH
     STA SUBF
     LDA #CH_SPACE             ; the bar's character maps start blank
     LDX #$1F
@@ -525,6 +568,12 @@ empty:
     INX
     CPX #$0C
     BNE empty
+
+    ; ---- the formation hour flies through stars, behind everything else ----
+    LDA SCENE
+    BNE no_stars
+    JSR stars
+no_stars:
 
     ; ---- the hours and the colon, palette 0 ----
     LDA #$1C                  ; palette 0, 4 bytes wide
@@ -681,6 +730,9 @@ next_life:
     STA MAP2+9
 
     INC FRAME
+    BNE frame_done
+    INC FRAMEH
+frame_done:
 wait_novb:
     LDA MSTAT
     BMI wait_novb
@@ -1116,6 +1168,71 @@ ld_done:
 ; helpers
 ; ======================================================================
 
+; the star field: three layers falling at 1/8, 1/4 and 1/2 a line a frame (the
+; frame count, not the clock: they are scenery, and the count never jumps). The
+; lists are empty when this runs, so the stars go first and everything else is
+; drawn over them. Inline rather than add_obj_hi: 24 stars every frame add up.
+stars:
+    LDA FRAMEH
+    STA TMP2
+    LDA FRAME
+    LSR TMP2
+    ROR A
+    STA SOFF+2                ; near: frames / 2
+    LSR TMP2
+    ROR A
+    STA SOFF+1                ; middle: frames / 4
+    LSR TMP2
+    ROR A
+    STA SOFF                  ; far: frames / 8
+    LDY #N_STARS-1
+star_loop:
+    LDX star_l,Y
+    LDA star_y,Y
+    CLC
+    ADC SOFF,X
+    TAX                       ; the star's line, counting from zone 0's top
+    LDA zone_of,X
+    BMI star_next             ; not in zones 1-11
+    STA TMP3
+    LDA page_of,X             ; $E0 + the line within the zone
+    STA TMP_HI
+    LDX TMP3
+    LDA ZCNT,X
+    CMP #$0F
+    BCS star_next
+    INC ZCNT,X
+    ASL
+    ASL
+    ORA zlo,X                 ; lists are 64-byte aligned
+    STA PTR
+    LDA zhi,X
+    STA PTR+1
+    LDA star_x,Y
+    STA TMP_X
+    LDA star_g,Y
+    STY SIDX
+    LDY #$00
+    STA (PTR),Y
+    INY
+    LDA #$FF                  ; palette 7, one byte wide
+    STA (PTR),Y
+    INY
+    LDA TMP_HI
+    STA (PTR),Y
+    INY
+    LDA TMP_X
+    STA (PTR),Y
+    INY
+    INY
+    LDA #$00                  ; the end of the list
+    STA (PTR),Y
+    LDY SIDX
+star_next:
+    DEY
+    BPL star_loop
+    RTS
+
 ; PTR = zone X's display list
 set_ptr:
     LDA zlo,X
@@ -1402,6 +1519,22 @@ def source():
     a("    .byte " + ",".join("G_%s" % t[2] for t in TERRAIN))
     a("terr_pal:")
     a("    .byte " + ",".join("$%02X" % t[3] for t in TERRAIN))
+    a("N_STARS = %d" % len(STARS))
+    a("star_x:")
+    a("    .byte " + ",".join("$%02X" % t[0] for t in STARS))
+    a("star_y:")
+    a("    .byte " + ",".join("$%02X" % t[1] for t in STARS))
+    a("star_l:")
+    a("    .byte " + ",".join("$%02X" % t[2] for t in STARS))
+    a("star_g:               ; glyph * 4, as a display list entry's low byte")
+    star0 = [n for n, _ in GLYPHS].index("STAR0")
+    a("    .byte " + ",".join("$%02X" % ((star0 + t[2]) * 4) for t in STARS))
+    a("zone_of:              ; line -> zone, $FF outside zones 1-11")
+    for r in range(0, 256, 32):
+        a("    .byte " + ",".join("$%02X" % (y >> 4 if 16 <= y < 192 else 0xFF) for y in range(r, r + 32)))
+    a("page_of:              ; line -> $E0 + its line within the zone")
+    for r in range(0, 256, 32):
+        a("    .byte " + ",".join("$%02X" % (0xE0 + (y & 15)) for y in range(r, r + 32)))
     a("tables_end:")
     a("    .res $FFFA-tables_end,$00")
     a("    .word nmi")

@@ -836,10 +836,16 @@ static void emu_line(void *ctx, int line, const uint8_t *colours) {
   uint8_t *row = &info.data[SCREEN_X];
   if (y < OV_BANNER_ROWS) {
     // the banner is drawn first; here the cartridge's background colour is
-    // see-through, so whatever it draws passes in front of the banner
+    // see-through, so whatever it draws passes in front of the banner -- except
+    // palette 7, the backdrop (the formation hour's stars), which passes behind
+    // it and shows only where the banner leaves the tube black
     uint8_t bg = s_emu.palette[0];
+    uint8_t b1 = s_emu.palette[29], b2 = s_emu.palette[30], b3 = s_emu.palette[31];
+    uint8_t tube = s_lut[0x00];
     for (int x = inset; x < MW - inset; x++) {
-      uint8_t col = (colours[x] == bg) ? row[x] : s_lut[colours[x]];
+      uint8_t c = colours[x];
+      bool behind = (c == bg) || ((c == b1 || c == b2 || c == b3) && row[x] != tube);
+      uint8_t col = behind ? row[x] : s_lut[c];
       row[x] = is_glare(x, y) ? lighten(col) : col;
     }
     return;
