@@ -2009,6 +2009,11 @@ def source():
     pictures = dict(GLYPHS)
     pictures.update(WIDE)
     def height(g):        # lines down to its last drawn one
+        if g == "STAR2":
+            # a near star's streak is never carried into the next zone: at a zone's
+            # last line only its grey tail shows, its white head drops out for a
+            # moment as it crosses -- which reads as a twinkle, so it stays
+            return 1
         return max(i + 1 for i, row in enumerate(pictures[g]) if any(row))
     def lo(g):
         return names.index(g) * 4 if g in names else WIDE_BASE + 20 * wides.index(g)
