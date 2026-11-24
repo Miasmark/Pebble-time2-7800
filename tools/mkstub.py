@@ -12,7 +12,9 @@ bursts of frames and sleeps in between:
     :59.5    the old minute explodes
     :00      the new minute fades in
     :02      the ships leave
-    other    the clock, and a cruiser crossing the bottom once a minute
+    other    the clock, and a cruiser that crosses the bottom once an hour,
+             a step each minute (the screen only changes in bursts, so
+             nothing on it should count seconds)
 
 Under it all, a lives-and-score bar in character mode: one ship per 20% of
 battery (white; green while charging; red on the last one) and today's steps as
@@ -610,8 +612,24 @@ shots_maybe:
     JSR add_obj
 ships_done:
 
-    ; ---- the cruiser crosses the bottom once a minute: x = seconds * 2.5 ----
-    LDA SECB
+    ; ---- the cruiser crosses the bottom once an hour: x = minutes * 2.5 ----
+    LDA CLK_MIN               ; minutes in binary: tens * 10 + ones
+    LSR
+    LSR
+    LSR
+    LSR
+    STA TMP_G
+    ASL
+    ASL
+    CLC
+    ADC TMP_G
+    ASL
+    STA TMP_G
+    LDA CLK_MIN
+    AND #$0F
+    CLC
+    ADC TMP_G
+    STA SECB                  ; (reused: the minute, binary)
     LSR
     STA TMP_G
     LDA SECB

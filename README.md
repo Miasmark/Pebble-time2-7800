@@ -43,7 +43,7 @@ burst. A lost phone link still vibrates at once.
 | | |
 |---|---|
 | `tools/gen_m6502_tables.py` | Generates the core's opcode tables (`m6502_tables.h`) from the toolkit's `m6502.py`: one opcode table for both projects. |
-| `tools/mkstub.py` | Builds `clockstub.a78`, an 8K cartridge that plays the minute change by itself from the clock registers: ships fly in at :57, shoot the old minute out, the new one fades in at :00, they leave at :02. Under it, a lives-and-score bar in character mode: a ship per 20% of battery, today's steps as the 1UP score. No input recordings: a watch face gets none to replay. |
+| `tools/mkstub.py` | Builds `clockstub.a78`, an 8K cartridge that plays the minute change by itself from the clock registers: ships fly in at :57, shoot the old minute out, the new one fades in at :00, they leave at :02; a cruiser crosses the bottom once an hour, a step a minute. Under it, a lives-and-score bar in character mode: a ship per 20% of battery, today's steps as the 1UP score. No input recordings: a watch face gets none to replay. |
 | `docs/clock-registers.md` | The read-only block at `$4000-$400F` through which the watch tells a ROM the time. |
 | `tests/harte_pack.py`, `tests/harte_run.c` | Tom Harte's SingleStepTests for the 6502: 10,000 cases for each of the 256 opcodes, checking registers, memory and cycle counts. |
 | `tests/klaus_run.c` | Klaus Dormann's 6502 functional test. |

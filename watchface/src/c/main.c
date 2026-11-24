@@ -1078,11 +1078,17 @@ static void draw_cabinet(GContext *ctx, GRect b) {
   GRect plate = GRect(8, 205, b.size.w - 16, 20);
   graphics_context_set_fill_color(ctx, GColorLightGray);
   graphics_fill_rect(ctx, plate, 3, GCornersAll);
-  GColor rainbow[6] = {GColorRed, GColorOrange, GColorChromeYellow,
-                       GColorGreen, GColorVividCerulean, GColorVividViolet};
-  for (int i = 0; i < 6; i++) {
+  // the rainbow runs left to right across the strip, red to violet
+  GColor rainbow[10] = {GColorRed, GColorOrange, GColorChromeYellow, GColorYellow,
+                        GColorSpringBud, GColorGreen, GColorCyan, GColorVividCerulean,
+                        GColorBlue, GColorVividViolet};
+  int rx = plate.origin.x + 3;
+  int rw = plate.size.w - 6;
+  for (int i = 0; i < 10; i++) {
+    int x0 = rx + rw * i / 10;
+    int x1 = rx + rw * (i + 1) / 10;
     graphics_context_set_fill_color(ctx, rainbow[i]);
-    graphics_fill_rect(ctx, GRect(plate.origin.x + 3, 207 + i, plate.size.w - 6, 1), 0, GCornerNone);
+    graphics_fill_rect(ctx, GRect(x0, 207, x1 - x0, 5), 0, GCornerNone);
   }
 
   draw_label(ctx, "7800", plate.origin.x + 6, 215, GColorBlack);
