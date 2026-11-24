@@ -17,7 +17,8 @@ from :57 to :02:
     2  bomber run  the ground scrolls; a bomber climbs in, its bomb takes out the
                    old minute, the new one fades in as it flies off
     3  lander      a lander comes down, lifts the old minute away, and sets the
-                   new one down gently in a puff of dust
+                   new one down gently in a puff of dust, with the Earth rising
+                   over the lunar hills behind
 
 Under it all: a cruiser that crosses the bottom once an hour, a step a minute,
 and a lives-and-score bar in character mode -- one life per 20% of battery
@@ -259,23 +260,6 @@ HOUSE = [  # bomber: a red roof and its ridge, a tree beside it
     "...33333333.1111",
     "...33333333..11.",
 ]
-EARTH = [  # lander: blue, green, white
-    ".....111111.....",
-    "...1111221111...",
-    "..112222211111..",
-    ".11122221111311.",
-    ".11112211113331.",
-    "1111112111133311",
-    "1111111111111111",
-    "1133111122211111",
-    "1333111222221111",
-    "1131111222221111",
-    ".11111112221111.",
-    ".11111111211111.",
-    "..113311111111..",
-    "...1133311111...",
-    ".....111111.....",
-]
 SPARK = ["...", ".3.", "333", ".3."][1:]   # lander: a bright star, one byte wide
 
 
@@ -297,36 +281,106 @@ def strata_tile():
     return lines
 
 
-def moon_tile():
-    """80 x 16, palette 5 greys, repeating every 80 pixels: the lunar ground, a
-    hilly horizon at the top and craters in it, in the top 12 lines (placed 4
-    lines down zone 11)."""
+def horizon_tile():
+    """80 x 16, palette 5 greys, repeating every 80 pixels: the lunar horizon --
+    a sunlit rim over rolling hills, the ground below darkening toward the
+    viewer, with craters."""
     lines = [[0] * 80 for _ in range(16)]
-    top = [3 + int(round(1.6 * math.sin(x * 2 * math.pi / 80) + 0.8 * math.sin(x * 6 * math.pi / 80)))
+    top = [4 + int(round(1.8 * math.sin(x * 2 * math.pi / 80) + 0.9 * math.sin(x * 6 * math.pi / 80 + 1)))
            for x in range(80)]
     for x in range(80):
         lines[top[x]][x] = 3                       # sunlit rim
-        for y in range(top[x] + 1, 12):
-            lines[y][x] = 2
-    for cx, cy, rx, ry in ((14, 7, 6, 2), (47, 8, 8, 2), (66, 6, 4, 1), (30, 9, 3, 1)):
+        for y in range(top[x] + 1, 16):
+            lines[y][x] = 2 if y < 11 else 1
+    for cx, cy, rx, ry in ((14, 9, 7, 1), (50, 12, 9, 2), (68, 8, 4, 1), (32, 14, 5, 1)):
         for x in range(cx - rx, cx + rx + 1):
             for y in range(cy - ry, cy + ry + 1):
                 if ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1.0:
                     lines[y][x % 80] = 1
             yb = cy + ry + 1                       # lit far wall
-            if yb < 12 and abs(x - cx) < rx:
+            if yb < 16 and abs(x - cx) < rx:
                 lines[yb][x % 80] = 3
-    seed = 4
-    for _ in range(30):
-        seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
-        x = (seed >> 8) % 80
-        y = 6 + (seed >> 16) % 6
-        if lines[y][x] == 2:
-            lines[y][x] = 1 if seed & 1 else 3
     return lines
 
 
-WIDE = [("STRATA", strata_tile()), ("MOON", moon_tile())]   # 20 bytes a line
+def regolith_tile():
+    """40 x 16, palette 5, repeating every 40 pixels: the dark foreground ground,
+    speckled, with a few small craters."""
+    lines = [[1] * 40 for _ in range(16)]
+    for cx, cy, rx, ry in ((9, 4, 5, 1), (28, 11, 6, 2), (18, 14, 3, 1)):
+        for x in range(cx - rx, cx + rx + 1):
+            for y in range(cy - ry, cy + ry + 1):
+                if ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1.0:
+                    lines[y % 16][x % 40] = 0 if abs(y - cy) < ry or ry == 1 else 1
+            yb = cy + ry + 1
+            if abs(x - cx) < rx:
+                lines[yb % 16][x % 40] = 2
+    seed = 9
+    for _ in range(24):                            # specks, kept dim behind the date
+        seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+        x, y = (seed >> 8) % 40, (seed >> 16) % 16
+        if lines[y][x] == 1:
+            lines[y][x] = 2
+    return lines
+
+
+def value_noise(seed, scale):
+    """Smooth 2D noise in 0..1 from a hashed lattice, bilinearly interpolated."""
+    def h(i, j):
+        n = (i * 374761393 + j * 668265263 + seed * 2147483647) & 0xFFFFFFFF
+        n = ((n ^ (n >> 13)) * 1274126177) & 0xFFFFFFFF
+        return (n & 0xFFFF) / 65535.0
+    def f(x, y):
+        x, y = x / scale, y / scale
+        i, j = int(math.floor(x)), int(math.floor(y))
+        fx, fy = x - i, y - j
+        fx, fy = fx * fx * (3 - 2 * fx), fy * fy * (3 - 2 * fy)
+        top = h(i, j) * (1 - fx) + h(i + 1, j) * fx
+        bot = h(i, j + 1) * (1 - fx) + h(i + 1, j + 1) * fx
+        return top * (1 - fy) + bot * fy
+    return f
+
+
+def earth_rows():
+    """56 x 28: the top of the Earth, rising -- ocean (1), land (2), cloud (3),
+    lit from the left with the night side (right) left dark; the bottom few
+    rows go behind the hills."""
+    rows = [[0] * 56 for _ in range(28)]
+    land = value_noise(7, 7.0)
+    land2 = value_noise(8, 3.5)
+    cloud = value_noise(19, 4.0)
+    streak = value_noise(23, 9.0)
+    r = 28.0
+    for y in range(28):
+        for x in range(56):
+            dx, dy = x + 0.5 - 28, 28 - (y + 0.5)
+            if dx * dx + dy * dy > r * r:
+                continue
+            u, v = dx / r, dy / r
+            if u > 0.62 * math.sqrt(max(0.0, 1 - v * v)):
+                continue                           # night
+            c = 1
+            if 0.65 * land(x, y) + 0.35 * land2(x, y) > 0.56:
+                c = 2
+            # clouds: wisps drawn out along the latitude, and the polar cap
+            if cloud(x * 0.6, y * 1.6) * 0.7 + streak(x, y) * 0.3 > 0.66 or v > 0.93:
+                c = 3
+            rows[y][x] = c
+    return rows
+
+
+EARTH = earth_rows()
+
+# wide tiles, after the characters in the glyph pages: (name, 16 lines, bytes wide)
+WIDE = [("STRATA", strata_tile(), 20), ("HORIZON", horizon_tile(), 20),
+        ("REGOLITH", regolith_tile(), 10),
+        ("EARTH_T", EARTH[:16], 14), ("EARTH_B", EARTH[16:] + [[0] * 56] * 4, 14)]
+
+
+def pw(palette, nbytes):
+    """A display list entry's palette | width byte."""
+    return (palette << 5) | ((32 - nbytes) & 0x1F)
+
 
 GLYPHS = []      # (name, 16 lines x 16 pixels)
 
@@ -423,8 +477,10 @@ STARS = star_table()
 # palette | width bytes for display list entries
 PW_STAR = 0xFF            # palette 7, 1 byte
 PW_P7 = 0xFC              # palette 7, 4 bytes (a 16-pixel glyph)
-PW_WIDE7 = 0xEC           # palette 7, 20 bytes (a wide tile)
-PW_WIDE5 = 0xAC           # palette 5, 20 bytes
+PW_WIDE7 = pw(7, 20)      # the strata
+PW_HORIZON = pw(5, 20)
+PW_REGOLITH = pw(5, 10)
+PW_EARTH = pw(7, 14)
 
 # layers: 0-2 the stars, 3 still, 4 the bomber's ground
 L_STILL, L_GROUND = 3, 4
@@ -449,12 +505,16 @@ BACKDROPS = [
           (70, 132, L_STILL, "PEBBLES", PW_P7), (112, 164, L_STILL, "PEBBLES", PW_P7),
           (24, 160, L_STILL, "PEBBLES", PW_P7), (128, 126, L_STILL, "FOSSIL", PW_P7)]),
     (80, bomber_ground()),
-    (16, [(8, 104, L_STILL, "EARTH", PW_P7),
-          (0, 180, L_STILL, "MOON", PW_WIDE5), (80, 180, L_STILL, "MOON", PW_WIDE5)] +
-         [(x, y, L_STILL, g, PW_STAR) for x, y, g in (
+    # the lander: stars, then Earthrise -- the top of the Earth over the hills
+    # (zone 9), the dark ground in front (zones 10-11); the Earth goes in first so
+    # the hills cover its foot
+    (16, [(x, y, L_STILL, g, PW_STAR) for x, y, g in (
              (6, 22, "SPARK"), (150, 30, "STAR0"), (40, 60, "STAR0"), (132, 84, "SPARK"),
-             (150, 104, "STAR0"), (60, 118, "SPARK"), (100, 128, "STAR0"), (138, 140, "SPARK"),
-             (30, 140, "STAR0"), (84, 152, "STAR0"), (12, 164, "SPARK"), (146, 166, "STAR0"))]),
+             (150, 104, "STAR0"), (60, 114, "SPARK"), (100, 126, "STAR0"), (138, 138, "SPARK"),
+             (112, 110, "STAR0"), (88, 140, "SPARK"))] +
+         [(12, 124, L_STILL, "EARTH_T", PW_EARTH), (12, 140, L_STILL, "EARTH_B", PW_EARTH),
+          (0, 144, L_STILL, "HORIZON", PW_HORIZON), (80, 144, L_STILL, "HORIZON", PW_HORIZON)] +
+         [(x, y, L_STILL, "REGOLITH", PW_REGOLITH) for y in (160, 176) for x in (0, 40, 80, 120)]),
 ]
 
 # per show: BACKGRND, palette 5, palette 6, palette 7. The watch has 64 colours,
@@ -480,7 +540,7 @@ def build_glyphs():
     g += [("STAR%d" % k, star_lines(k)) for k in range(3)]
     g += [("ROOTS", picture(ROOTS)), ("PEBBLES", picture(PEBBLES)), ("FOSSIL", picture(FOSSIL)),
           ("TREES", picture(TREES)), ("FIELD", picture(FIELD)), ("HOUSE", picture(HOUSE)),
-          ("EARTH", picture(EARTH)), ("SPARK", picture(SPARK))]
+          ("SPARK", picture(SPARK))]
     return g
 
 
@@ -1937,6 +1997,12 @@ SHOOTER = "    ; ---- the minutes: palette 2, or from :59.5 the blast in palette
 
 
 WIDE_BASE = CH_SPACE + len(small_chars())   # the wide tiles, after the characters
+WIDE_LO = {}
+_o = WIDE_BASE
+for _n, _l, _b in WIDE:
+    WIDE_LO[_n] = _o
+    _o += _b
+assert _o <= 256, "the glyph pages are full (%d bytes)" % _o
 
 
 def source():
@@ -1951,8 +2017,8 @@ def source():
         a("G_%-8s= $%02X" % (name, i))
     for i, (name, _) in enumerate(small_chars()):
         a("CH_%-6s= $%02X" % (name, CH_SPACE + i))
-    for i, (name, _) in enumerate(WIDE):
-        a("W_%-7s= $%02X" % (name, WIDE_BASE + 20 * i))
+    for name, _, _ in WIDE:
+        a("W_%-8s= $%02X" % (name, WIDE_LO[name]))
     a("")
     a("    .org $%04X" % ROM_BASE)
     a(CODE_ASM.strip().replace("SHOOTER_CODE", SHOOTER.rstrip("\n")))
@@ -1975,8 +2041,8 @@ def source():
         for _, ch in small_chars():
             px = ch[line]
             data.append((px[0] << 6) | (px[1] << 4) | (px[2] << 2) | px[3])
-        for _, w in WIDE:
-            for b in range(0, 80, 4):
+        for _, w, nb in WIDE:
+            for b in range(0, nb * 4, 4):
                 data.append((w[line][b] << 6) | (w[line][b + 1] << 4) | (w[line][b + 2] << 2) | w[line][b + 3])
         assert len(data) <= 256
         a("    .byte " + ",".join("$%02X" % b for b in data))
@@ -2005,9 +2071,9 @@ def source():
         items += its
     first.append(len(items))
     names = [n for n, _ in GLYPHS]
-    wides = [n for n, _ in WIDE]
+    wides = [n for n, _, _ in WIDE]
     pictures = dict(GLYPHS)
-    pictures.update(WIDE)
+    pictures.update((n, l) for n, l, _ in WIDE)
     def height(g):        # lines down to its last drawn one
         if g == "STAR2":
             # a near star's streak is never carried into the next zone: at a zone's
@@ -2016,7 +2082,7 @@ def source():
             return 1
         return max(i + 1 for i, row in enumerate(pictures[g]) if any(row))
     def lo(g):
-        return names.index(g) * 4 if g in names else WIDE_BASE + 20 * wides.index(g)
+        return names.index(g) * 4 if g in names else WIDE_LO[g]
     a("bd_moving:            ; 1: the backdrop moves, so it is rebuilt every frame")
     a("    .byte " + ",".join("$%02X" % int(any(t[2] != L_STILL for t in its)) for _, its in BACKDROPS))
     a("bd_zmin:")
