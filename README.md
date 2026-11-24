@@ -91,6 +91,16 @@ In `watchface/src/c/main.c`:
   timer. It starts the cartridge the way the fork's no-BIOS mode does. When the
   cartridge sits in a loop waiting for vertical blank, the emulator skips ahead
   instead of running the loop.
+  - **Cartridges:** linear ROMs up to 48K; or up to 32K with 16K of RAM at
+    `$4000` (header bit `$0004`), or the fork's mirror RAM (bit `$0080`: the
+    RAM's A8 line is not wired, so each odd page is the even page below it, as
+    on the *Rescue on Fractalus* prototype). Banked cartridges and extra
+    hardware are refused. POKEY is not emulated (the watch is silent).
+  - **320 modes:** MARIA draws two pixels where the watch has one column, and
+    a pair of 320-mode pixels is exactly one colour cycle. Each pair is shown
+    the way a television decodes it, artifact colours included
+    (`artifact_table.h`, fitted to the fork's composite video model); a solid
+    pair is its palette colour, as in the 160 modes.
 - **The cartridge** (`tools/mkstub.py` builds `clockstub.a78`, 32K): it reads
   the time, battery, steps, high score, channel and a few flags from the
   [clock registers](docs/clock-registers.md) at `$0600-$061F` every frame, and
@@ -118,9 +128,11 @@ In `watchface/src/c/main.c`:
 |---|---|
 | `watchface/` | The Pebble project: `src/c/main.c` (the face), `src/c/emu/` (the 7800), `resources/data/clockstub.a78` (the cartridge). |
 | `tools/mkstub.py` | Builds the cartridge: code, graphics, backdrops and the static are all generated here. |
+| `tools/mkdemos.py` | Builds the two demo cartridges below: `demo_artifacts.a78` (320A patterns) and `demo_ram.a78` / `demo_mram.a78` (cartridge RAM, plain and mirror). |
+| `tools/gen_artifacts.cpp` | Generates `artifact_table.h` from the fork's `a7800_composite.h` (MiSTer's composite encoder and decoder): runs every pair of colour codes through it and fits the artifact term. |
 | `tools/gen_m6502_tables.py` | Generates the core's opcode tables (`m6502_tables.h`) from the toolkit's `m6502.py`, so both projects share one opcode table. |
 | `docs/clock-registers.md` | The read-only block at `$0600-$061F` through which the watch passes the time, battery, steps, high score, channel and flags to a ROM. No mapper or add-on uses that range, so it works with any cartridge size. |
-| `tests/a78run.c` | Runs a cartridge on the watch core on this computer. It writes frames as PPM and RAM dumps, and reports per-frame CPU/DMA/WSYNC time. Options set the clock standing (`-c HHMM`) or running (`-t HHMMSS`), the wrist-flick flag (`-l`), battery (`-b`), steps (`-S`), charging (`-g`), the channel (`-C`), flicks that change it (`-k`), the high score (`-H`) and a new one (`-N`), Quiet Time (`-Q`), no phone (`-D`) and 12-hour time (`-12`). |
+| `tests/a78run.c` | Runs a cartridge on the watch core on this computer. It writes frames as PPM (320-mode pairs in artifact colours, or with `-L` the left pixel) and RAM dumps, and reports per-frame CPU/DMA/WSYNC time. Options set the clock standing (`-c HHMM`) or running (`-t HHMMSS`), the wrist-flick flag (`-l`), battery (`-b`), steps (`-S`), charging (`-g`), the channel (`-C`), flicks that change it (`-k`), the high score (`-H`) and a new one (`-N`), Quiet Time (`-Q`), no phone (`-D`) and 12-hour time (`-12`). |
 | `tests/vbprobe.c` | Reports the line on which a cartridge's main loop finishes each frame. |
 | `tests/harte_pack.py`, `tests/harte_run.c` | Tom Harte's SingleStepTests for the 6502: 10,000 cases per opcode, checking registers, memory and cycle counts. |
 | `tests/klaus_run.c` | Klaus Dormann's 6502 functional test. |
@@ -143,6 +155,13 @@ python tools/gen_m6502_tables.py --toolkit ../a7800-toolkit \
 python tools/mkstub.py --toolkit ../a7800-toolkit -o build/clockstub.a78
 cp build/clockstub.a78 watchface/resources/data/
 
+# the artifact table (only when the fork's composite model changes)
+c++ -O2 -std=c++17 -I../mame-atari8bit7800/src/mame/atari tools/gen_artifacts.cpp -o build/gen_artifacts
+build/gen_artifacts > watchface/src/c/emu/artifact_table.h
+
+# the demo cartridges
+python tools/mkdemos.py --toolkit ../a7800-toolkit -o build
+
 # the host runner
 W=watchface/src/c/emu
 cc -O2 -I$W tests/a78run.c $W/a7800.c $W/m6502.c $W/palette7800.c -o build/a78run
@@ -161,6 +180,29 @@ python tests/riot_check.py build/riot-ram.bin ../a7800-toolkit/tests/golden/riot
 python tests/dma_fit.py --toolkit ../a7800-toolkit --run build/a78run
 ```
 
+## Demos
+
+`tools/mkdemos.py` builds two small cartridges that show what the emulator
+does beyond the clock; built copies are in `demos/`. They run in a78run, in the
+fork, and on the watch (uploaded as the face's `STUB_ROM`, under the banner and
+date).
+
+**320A artifact colours** (`demo_artifacts.a78`): one row per hue, each with
+four blocks of one byte repeated: `$FF` (solid), `$AA` and `$55` (every other
+pixel: one colour cycle, which a television turns into colour), and `$F0`
+(plain stripes). Left, as the watch shows it; right, a78run `-L`, the left
+pixel of each pair as before.
+
+![320A patterns: artifact colours on the left, the left pixel only on the right](docs/demo-artifacts.png)
+
+**Cartridge RAM** (`demo_ram.a78`, header bit `$0004`, and `demo_mram.a78`,
+bit `$0080`): the bar is the RAM the cartridge found -- green for 16K, blue for
+mirror RAM, red for none -- and the bands below are drawn by MARIA straight
+from the RAM, which the 6502 rewrites every frame. On mirror RAM each odd line
+is the even line above it, so the bands come out two lines at a time.
+
+![Cartridge RAM: 16K on the left, mirror RAM on the right](docs/demo-ram.gif)
+
 ## Results
 
 | check | result |
@@ -169,6 +211,7 @@ python tests/dma_fit.py --toolkit ../a7800-toolkit --run build/a78run
 | Klaus Dormann functional test | Passes (traps at `$3469`). |
 | RIOT timer and WSYNC vs MAME (`riot.a78`) | All eight blocks the toolkit checks are exact; the full 4K of RAM is byte-identical to the toolkit simulator's. |
 | DMA cost model vs the fork | Ceiling 1,960 iterations (MAME: 1,960); per line 5.657 cycles (fork 5.62), per zone 1.911 (1.89), per object 1.977 (1.99), per byte 0.750 (0.755). |
+| 320-mode artifact colours vs the fork's composite model | Over all 65,536 pairs of colour codes, the fit gives the model's own colour on the 64-colour screen for 91.4%, and is one step off in a channel for the rest (rms 3.6 of 255). |
 | Skipping the vertical-blank wait loop | Same frames as running it instruction by instruction, for every show, including channel changes. |
 | Cost per watch draw (4 frames, 1 shown) | 3.0–3.3 million x86 instructions on this computer, depending on the show (callgrind, `-Os`), about 0.6 million more while the phone is away (the snow). The face's own log gives the milliseconds on the watch. |
 

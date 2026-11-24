@@ -858,7 +858,25 @@ static void overlay_banner(GBitmap *fb);
 static void overlay_date(GBitmap *fb);
 
 // One shown scanline from the emulator, straight into the tube
-static void emu_line(void *ctx, int line, const uint8_t *colours) {
+// In the 320 modes each watch column is a pair of MARIA pixels -- one colour
+// cycle -- shown as a television shows it, artifact colours and all
+// (palette7800_pair). With ARTIFACT_COLOURS at 0, the left pixel unless it is
+// background, then the right.
+#define ARTIFACT_COLOURS 1
+static uint8_t s_rgb[256][3];
+
+static inline uint8_t pair_colour(uint8_t a, uint8_t b, uint8_t bg) {
+  if (a == b) {
+    return s_lut[a];
+  }
+#if ARTIFACT_COLOURS
+  return palette7800_pair(s_rgb, a, b);
+#else
+  return s_lut[a != bg ? a : b];
+#endif
+}
+
+static void emu_line(void *ctx, int line, const uint8_t *colours, const uint8_t *right) {
   int y = line - EMU_FIRST_LINE;
   if (!s_emu_fb || y < 0 || y >= MH) {
     return;
@@ -881,8 +899,18 @@ static void emu_line(void *ctx, int line, const uint8_t *colours) {
     uint8_t tube = s_lut[0x00];
     for (int x = inset; x < MW - inset; x++) {
       uint8_t c = colours[x];
-      bool behind = (c == bg) || ((c == b1 || c == b2 || c == b3) && row[x] != tube);
-      uint8_t col = behind ? row[x] : s_lut[c];
+      uint8_t d = right ? right[x] : c;
+      bool behind = (c == bg && d == bg) ||
+                    ((c == b1 || c == b2 || c == b3) && (d == c || d == bg) && row[x] != tube);
+      uint8_t col = behind ? row[x] : pair_colour(c, d, bg);
+      row[x] = is_glare(x, y) ? lighten(col) : col;
+    }
+    return;
+  }
+  if (right) {
+    uint8_t bg = s_emu.palette[0];
+    for (int x = inset; x < MW - inset; x++) {
+      uint8_t col = pair_colour(colours[x], right[x], bg);
       row[x] = is_glare(x, y) ? lighten(col) : col;
     }
     return;
@@ -906,6 +934,17 @@ static void emu_init(void) {
     APP_LOG(APP_LOG_LEVEL_ERROR, "emu: not a stub cartridge (%d)", err);
     return;
   }
+  if (s_emu.cart_ram_size) {   // 16K of RAM on the cartridge
+    uint8_t *ram = malloc(s_emu.cart_ram_size);
+    if (!ram) {
+      APP_LOG(APP_LOG_LEVEL_ERROR, "emu: no room for the cartridge's RAM");
+      return;
+    }
+    a7800_set_cart_ram(&s_emu, ram);
+  }
+#if ARTIFACT_COLOURS
+  palette7800_build_rgb(s_rgb);
+#endif
   a7800_power_on(&s_emu);
   a7800_set_output(&s_emu, EMU_FIRST_LINE, MH, emu_line, NULL);
   s_emu_ok = true;

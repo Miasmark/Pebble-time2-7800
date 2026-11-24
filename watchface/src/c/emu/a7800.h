@@ -65,7 +65,12 @@
 #define A7800_CLK_SIZE 0x20       // $0600-$061F
 
 // One shown scanline: `colours` are 160 MARIA colour bytes (hue << 4 | luma).
-typedef void (*a7800_line_fn)(void *ctx, int line, const uint8_t *colours);
+//
+// In the 320 modes MARIA draws two pixels where the watch has one column: then
+// `right` holds the right-hand one of each pair (and `colours` the left), and
+// the caller decides how to show the pair (a TV makes artifact colours of it).
+// For a line drawn entirely in the 160 modes `right` is NULL.
+typedef void (*a7800_line_fn)(void *ctx, int line, const uint8_t *colours, const uint8_t *right);
 
 typedef struct A7800 {
   M6502 cpu;
@@ -75,6 +80,9 @@ typedef struct A7800 {
   const uint8_t *rom;           // linear cartridge ROM, ending at $FFFF
   uint32_t rom_size;
   uint32_t rom_start;
+  uint8_t *cart_ram;            // 16K at $4000-$7FFF, if the cartridge has it (supplied by the caller)
+  uint16_t cart_ram_size;       // 0 or 16384: what the header asks for
+  bool cart_ram_mirror;         // A8 not wired: each odd page is the even page below it
 
   uint8_t clock[A7800_CLK_SIZE];
 
@@ -116,6 +124,8 @@ typedef struct A7800 {
   a7800_line_fn emit;
   void *emit_ctx;
   uint8_t out[A7800_WIDTH];
+  uint8_t out_r[A7800_WIDTH];   // the right-hand pixel of each pair, in a line with 320-mode pixels
+  bool out_pairs;               // this line has 320-mode pixels
   int out_x;
   bool shown;                   // this line is being emitted
   bool skip_spins;              // fast-forward MSTAT polling loops (on after power-on)
@@ -125,8 +135,11 @@ typedef struct A7800 {
 } A7800;
 
 // Loads a .a78 (with its 128-byte header) or a raw image. Linear carts only,
-// up to 48K. Returns 0, or a negative error.
+// up to 48K; or up to 32K with 16K of RAM at $4000 (header bit $0004) or the
+// mirror RAM of bit $0080. Returns 0, or a negative error. If cart_ram_size is
+// then non-zero, give it that much RAM with a7800_set_cart_ram before power-on.
 int a7800_load(A7800 *m, const uint8_t *image, uint32_t len);
+void a7800_set_cart_ram(A7800 *m, uint8_t *ram);
 
 // The fork's no-BIOS power-on state. Call after a7800_load.
 void a7800_power_on(A7800 *m);

@@ -18,6 +18,8 @@
 //     -Q           paused: the watch's Quiet Time (CLK_FLAGS bit 3)
 //     -D           no phone (CLK_FLAGS bit 6 clear; it is set otherwise)
 //     -12          12-hour time (CLK_FLAGS bit 7)
+//     -L           320 modes: the left pixel of each pair unless it is background,
+//                  instead of the television's artifact colour
 //     -k F,G,...   flick at these frames: the channel moves on by one
 //     -e N         snapshot every Nth frame (with -s FIRST,LAST as the range)
 //     -i FILE      input clip: one byte per frame, b7-4 SWCHA P0 bits, b0 fire
@@ -40,11 +42,19 @@ static uint8_t lut[256];
 static uint8_t pix[192][160];
 static int window_first = 42;
 
-static void on_line(void *ctx, int line, const uint8_t *colours) {
-  (void)ctx;
+static uint8_t rgb[256][3];
+static int left_only;   // -L: 320-mode pairs as the left pixel unless background
+
+static void on_line(void *ctx, int line, const uint8_t *colours, const uint8_t *right) {
+  A7800 *m = (A7800 *)ctx;
   int y = line - window_first;
   if (y >= 0 && y < 192) {
-    for (int x = 0; x < 160; x++) pix[y][x] = lut[colours[x]];
+    for (int x = 0; x < 160; x++) {
+      uint8_t a = colours[x], b = right ? right[x] : a;
+      if (a == b) pix[y][x] = lut[a];
+      else if (left_only) pix[y][x] = lut[a != m->palette[0] ? a : b];
+      else pix[y][x] = palette7800_pair(rgb, a, b);
+    }
   }
 }
 
@@ -99,6 +109,7 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "-Q")) paused = 1;
     else if (!strcmp(argv[i], "-D")) nophone = 1;
     else if (!strcmp(argv[i], "-12")) h12 = 1;
+    else if (!strcmp(argv[i], "-L")) left_only = 1;
     else if (!strcmp(argv[i], "-e")) every = atoi(argv[++i]);
     else if (!strcmp(argv[i], "-p")) probe = (int)strtol(argv[++i], NULL, 16);
   }
@@ -123,10 +134,13 @@ int main(int argc, char **argv) {
   static A7800 m;
   int err = a7800_load(&m, image, len);
   if (err) { fprintf(stderr, "load failed: %d\n", err); return 1; }
+  static uint8_t cart_ram[0x4000];
+  if (m.cart_ram_size) a7800_set_cart_ram(&m, cart_ram);
   a7800_power_on(&m);
   if (noskip) m.skip_spins = false;
   palette7800_build(lut);
-  a7800_set_output(&m, window_first, 192, on_line, NULL);
+  palette7800_build_rgb(rgb);
+  a7800_set_output(&m, window_first, 192, on_line, &m);
   if (clock_hhmm >= 0) {
     m.clock[A7800_CLK_HOUR] = bcd(clock_hhmm / 100);
     m.clock[A7800_CLK_MIN] = bcd(clock_hhmm % 100);

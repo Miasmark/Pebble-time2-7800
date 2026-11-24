@@ -383,25 +383,24 @@ static void fetch_zone(A7800 *m) {
 // The picture
 // ---------------------------------------------------------------------------
 
-static uint8_t pixel(const A7800 *m, int x) {
+// A 320-mode cell's two pixels, left and right, as colour codes
+static void pixel_pair(const A7800 *m, int x, uint8_t *left, uint8_t *right) {
   uint8_t cell = m->line_ram[m->active ^ 1][x];
-  uint8_t c;
-  if (m->rm < 2) {
-    c = m->palette[cell];
-  } else {
-    // 320 modes: two pixels per cell; the watch has 160 columns, so show the
-    // left one unless it is background, then the right one
-    uint8_t d1, d2;
-    if (m->rm == 2) {   // 320B, 320D
-      d1 = (uint8_t)((cell & 0x10) | (cell & 0x02) | ((cell >> 3) & 1));
-      d2 = (uint8_t)((cell & 0x10) | ((cell << 1) & 0x02) | ((cell >> 2) & 1));
-    } else {            // 320A, 320C
-      d1 = (uint8_t)((cell & 0x1C) | (cell & 0x02));
-      d2 = (uint8_t)((cell & 0x1C) | ((cell << 1) & 0x02));
-    }
-    c = m->palette[(d1 & 3) ? d1 : d2];
+  uint8_t d1, d2;
+  if (m->rm == 2) {   // 320B, 320D
+    d1 = (uint8_t)((cell & 0x10) | (cell & 0x02) | ((cell >> 3) & 1));
+    d2 = (uint8_t)((cell & 0x10) | ((cell << 1) & 0x02) | ((cell >> 2) & 1));
+  } else {            // 320A, 320C
+    d1 = (uint8_t)((cell & 0x1C) | (cell & 0x02));
+    d2 = (uint8_t)((cell & 0x1C) | ((cell << 1) & 0x02));
   }
-  return m->color_kill ? (uint8_t)(c & 0x0F) : c;
+  uint8_t a = m->palette[d1], b = m->palette[d2];
+  if (m->color_kill) {
+    a &= 0x0F;
+    b &= 0x0F;
+  }
+  *left = a;
+  *right = b;
 }
 
 static bool line_shown(const A7800 *m) {
@@ -415,11 +414,20 @@ static void emit_upto(A7800 *m, int t) {
   if (x >= end) {
     return;
   }
-  if (m->rm < 2 && !m->color_kill) {   // the 160 modes: one lookup a pixel
-    const uint8_t *cells = m->line_ram[m->active ^ 1];
-    for (; x < end; x++) m->out[x] = m->palette[cells[x]];
-  } else {
-    for (; x < end; x++) m->out[x] = pixel(m, x);
+  const uint8_t *cells = m->line_ram[m->active ^ 1];
+  if (m->rm < 2) {                     // the 160 modes: one pixel a cell
+    uint8_t kill = m->color_kill ? 0x0F : 0xFF;
+    int x0 = x;
+    for (; x < end; x++) m->out[x] = m->palette[cells[x]] & kill;
+    if (m->out_pairs) {
+      memcpy(&m->out_r[x0], &m->out[x0], (size_t)(x - x0));
+    }
+  } else {                             // the 320 modes: two
+    if (!m->out_pairs) {
+      memcpy(m->out_r, m->out, (size_t)x);   // the line's 160-mode part so far
+      m->out_pairs = true;
+    }
+    for (; x < end; x++) pixel_pair(m, x, &m->out[x], &m->out_r[x]);
   }
   m->out_x = x;
 }
@@ -539,6 +547,7 @@ void a7800_run_line(A7800 *m) {
   m->shown = shown;
   m->wsync = false;   // line reset
   m->out_x = 0;
+  m->out_pairs = false;
 
   // 8 cycles in: the line's DMA
   run_cpu(m, 16);
@@ -584,7 +593,7 @@ void a7800_run_line(A7800 *m) {
   run_cpu(m, A7800_HALF_PER_LINE);
   if (shown) {
     emit_upto(m, A7800_HALF_PER_LINE);
-    m->emit(m->emit_ctx, m->line, m->out);
+    m->emit(m->emit_ctx, m->line, m->out, m->out_pairs ? m->out_r : NULL);
   }
   m->shown = false;
 
@@ -616,6 +625,13 @@ static void map_pages(A7800 *m) {
     m->cpu.rd_page[p] = &m->ram[(p - 0x18) << 8];
     m->cpu.wr_page[p] = &m->ram[(p - 0x18) << 8];
   }
+  if (m->cart_ram) {
+    for (int p = 0x40; p < 0x80; p++) {
+      int q = m->cart_ram_mirror ? (p & 0xFE) : p;   // A8 not wired
+      m->cpu.rd_page[p] = &m->cart_ram[(q - 0x40) << 8];
+      m->cpu.wr_page[p] = &m->cart_ram[(q - 0x40) << 8];
+    }
+  }
   for (uint32_t p = m->rom_start >> 8; p < 0x100; p++) {
     m->cpu.rd_page[p] = &m->rom[(p << 8) - m->rom_start];
   }
@@ -628,15 +644,21 @@ int a7800_load(A7800 *m, const uint8_t *image, uint32_t len) {
   if (len >= 128 && memcmp(image + 1, "ATARI7800", 9) == 0) {
     size = ((uint32_t)image[49] << 24) | ((uint32_t)image[50] << 16) | ((uint32_t)image[51] << 8) | image[52];
     uint16_t type = (uint16_t)((image[53] << 8) | image[54]);
-    if (type & 0x3F3E) {
-      return -2;   // banked, cartridge RAM or extra hardware: not a stub
+    if (type & 0x3F3A) {
+      return -2;   // banked, banked RAM or extra hardware: not supported
+    }
+    if (type & 0x0084) {
+      // 16K of RAM at $4000 (bit 2), or the mirror RAM (bit 7: the fork's
+      // a78_rom_mram, A8 not wired); either leaves $8000-$FFFF for the ROM
+      m->cart_ram_size = 0x4000;
+      m->cart_ram_mirror = (type & 0x0080) != 0;
     }
     data = image + 128;
     if (size > len - 128) {
       return -3;
     }
   }
-  if (size == 0 || size > 0xC000 || (size & 0xFF)) {
+  if (size == 0 || size > (m->cart_ram_size ? 0x8000 : 0xC000) || (size & 0xFF)) {
     return -1;
   }
   m->rom = data;
@@ -645,7 +667,14 @@ int a7800_load(A7800 *m, const uint8_t *image, uint32_t len) {
   return 0;
 }
 
+void a7800_set_cart_ram(A7800 *m, uint8_t *ram) {
+  m->cart_ram = ram;
+}
+
 void a7800_power_on(A7800 *m) {
+  if (m->cart_ram) {
+    memset(m->cart_ram, 0, m->cart_ram_size);
+  }
   memset(m->ram, 0, sizeof(m->ram));
   memset(m->riot_ram, 0, sizeof(m->riot_ram));
   memset(m->palette, 0, sizeof(m->palette));
