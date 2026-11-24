@@ -1920,23 +1920,64 @@ bd_add:
 bd_add_full:
     RTS
 
-; SCRL: how far the bomber's ground has scrolled -- half a line a frame
-; during the show, by the clock
+; SCRL: how far the bomber's ground has scrolled. Half a line a frame through
+; each show (180 lines from :57 to :03) and still in between -- so it carries on
+; from show to show rather than going back: show k (the one that starts at
+; minute k's :57) runs from 180k to 180k + 180, mod 256. Through :57-:59 the
+; show is this minute's; from :00, and until the next :57, the one just ended.
 calc_scrl:
+    LDA MINB
+    LDX STAGE
+    CPX #$03
+    BCC scrl_k                ; :57-:59: this minute's show
+    SEC
+    SBC #$01                  ; after it: the show that began last minute
+    BCS scrl_k
+    LDA #59
+scrl_k:
+    STA TMP3                  ; k; TMP2 = 180k mod 256 = 128k + 32k + 16k + 4k
+    ASL
+    ASL
+    STA TMP2
+    ASL
+    ASL
+    CLC
+    ADC TMP2
+    STA TMP2
+    LDA TMP3
+    ASL
+    ASL
+    ASL
+    ASL
+    ASL
+    CLC
+    ADC TMP2
+    STA TMP2
+    LDA TMP3
+    LSR
+    LDA #$00
+    ROR
+    CLC
+    ADC TMP2
+    STA TMP2
     LDA STAGE
     CMP #$FF
-    BEQ scrl_still
+    BEQ scrl_after
     TAX
-    LDA times30,X
-    STA TMP2
+    LDA times30,X             ; in the show: 30 lines a second, by the clock
+    STA TMP3
     LDA SUBF
     LSR
+    CLC
+    ADC TMP3
     CLC
     ADC TMP2
     STA SCRL
     RTS
-scrl_still:
-    LDA #$00
+scrl_after:
+    LDA TMP2                  ; between shows: where the last one stopped
+    CLC
+    ADC #180
     STA SCRL
     RTS
 
