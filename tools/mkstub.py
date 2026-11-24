@@ -1,37 +1,39 @@
 #!/usr/bin/env python3
-"""Build the clock stub: an 8K 7800 cartridge that plays the minute change by itself.
+"""Build the clock cartridge: 16K of 7800 that stages every minute change by itself.
 
     python tools/mkstub.py --toolkit ../a7800-toolkit -o build/clockstub.a78
 
 Everything it draws comes from the clock registers (docs/clock-registers.md),
 read every frame -- never from a frame count, because the watch runs only short
-bursts of frames and sleeps in between:
+bursts of frames and sleeps in between. Each hour (hour mod 4) has its own show,
+from :57 to :02:
 
-    :57      two ships fly in from the sides and take station under the minutes
-    :58-:59  three volleys; each hit flashes the minute digits white
-    :59.5    the old minute explodes
-    :00      the new minute fades in
-    :02      the ships leave
-    other    the clock, and a cruiser that crosses the bottom once an hour,
-             a step each minute (the screen only changes in bursts, so
-             nothing on it should count seconds)
+    0  formation   two attackers fly in, three volleys, the old minute explodes,
+                   the new one fades in, they leave
+    1  drill rig   a rig bores up through the rock under the clock, the old
+                   minute shakes and crumbles, the rig pushes the new one up
+                   into place and sinks away
+    2  bomber run  the ground scrolls; a bomber climbs in, its bomb takes out the
+                   old minute, the new one fades in as it flies off
+    3  lander      a lander comes down, lifts the old minute away, and sets the
+                   new one down gently in a puff of dust
 
-Under it all, a lives-and-score bar in character mode: one ship per 20% of
-battery (white; green while charging; red on the last one) and today's steps as
-the 1UP score.
+Under it all: a cruiser that crosses the bottom once an hour, a step a minute,
+and a lives-and-score bar in character mode -- one ship per 20% of battery
+(white; green while charging; red on the last one) and today's steps as the
+1UP score. With CLK_FLAGS bit 4 set (a wrist flick) and no show on, the digits'
+top rows cycle through the hues.
 
-Within a second it counts frames, and the count starts again every time the
-seconds register changes, so it can never drift from the watch's clock. With
-CLK_FLAGS bit 4 set (the wearer flicked their wrist) and nothing else going on,
-the top rows of the digits cycle through the hues.
+Within a second it counts frames, starting again whenever the seconds register
+changes, so it cannot drift from the watch's clock. Real MARIA display lists
+are rebuilt every frame in vertical blank, from 160A graphics in ROM laid out
+line-planar for 16-line zones. Things that move up and down are placed to the
+line by splitting them over two zones with shifted graphics pointers, and holey
+DMA (on in every zone) blanks the pages either side of the graphics -- the way
+7800 games position sprites vertically. Assembled with the a7800 toolkit's
+tools/asm.py, given a header by its newgame.header().
 
-Real MARIA display lists rebuilt every frame in vertical blank, 160A graphics in
-ROM laid out line-planar for 16-line zones, the display list list in ROM. The
-shots move 4 lines at a time between zones using four pre-shifted copies. It is
-assembled with the a7800 toolkit's tools/asm.py and given a header by its
-newgame.header().
-
-8K is half the smallest commercial cartridge (16K). No signature: the watch
+16K, the size of the smallest commercial cartridge. No signature: the watch
 starts it without a BIOS, as the a7800 fork of MAME does in its no-BIOS mode.
 """
 import argparse
@@ -39,55 +41,14 @@ import math
 import os
 import sys
 
-ROM_BASE = 0xE000
+ROM_BASE = 0xC000      # code from here
 GFX = 0xE000           # 16 pages: page $E0 + (15 - line) holds line `line` of every glyph
-CODE = 0xF000          # the display list list, tables, then the code
+TABLES = 0xF000        # the display list list and tables
 DL_ZONES = 16          # 16 x 16 lines covers every DMA line (17-258)
-DLBASE = 0x1900        # 32 bytes per zone's display list
-DL_STRIDE = 32
-TIME_ZONE = 5          # lines 98-113 (watch rows 56-71)
-SHOT_ZONE0 = 6         # shots travel through zones 6-8
-SHIP_ZONE = 9          # the attackers
-CRUISER_ZONE = 11
-TIME_X = [32, 52, 72, 92, 112]
-SHIP_A_X, SHIP_B_X = 92, 112   # under the minute digits
-
-G_COLON, G_SHIP, G_SHOT0, G_BOOM0 = 10, 11, 12, 16
-N_GLYPHS = 18
+DLBASE = 0x1900        # 64 bytes (15 entries) per zone's display list: $1900-$1CFF
+DL_STRIDE = 64
 HUD_ZONE = 12          # lines 210-225 (watch rows 168-183)
-MAP1, MAP2 = 0x1B00, 0x1B10    # character maps for the bar's two entries
-
-# character mode (CTRL bit 4 clear): one byte, four pixels, per character, read
-# from (CHARBASE + offset) << 8 | code -- the same pages as the glyphs, after them
-CH_SPACE = N_GLYPHS * 4
-SMALL_DIGITS = [
-    ["111", "101", "101", "101", "111"], ["010", "110", "010", "010", "111"],
-    ["111", "001", "111", "100", "111"], ["111", "001", "111", "001", "111"],
-    ["101", "101", "111", "001", "001"], ["111", "100", "111", "001", "111"],
-    ["111", "100", "111", "101", "111"], ["111", "001", "010", "010", "010"],
-    ["111", "101", "111", "101", "111"], ["111", "101", "111", "001", "111"],
-]
-SMALL_U = ["101", "101", "101", "101", "111"]
-SMALL_P = ["111", "101", "111", "100", "100"]
-MINI_SHIP = ["...11...", "..1111..", ".111111.", "11.11.11", "1......1"]
-
-
-def small_chars():
-    """(name, 16 lines x 4 pixels) for every character, in code order from CH_SPACE."""
-    def char(rows, colour):
-        lines = [[0] * 4 for _ in range(16)]
-        for r, row in enumerate(rows):
-            for c, ch in enumerate(row):
-                if ch not in ".0":
-                    lines[5 + r][c] = colour
-        return lines
-    out = [("SPACE", char([], 0))]
-    out += [("D%d" % d, char(rows, 3)) for d, rows in enumerate(SMALL_DIGITS)]   # yellow
-    out += [("U", char(SMALL_U, 2)), ("P", char(SMALL_P, 2)),                   # red
-            ("R1", char(SMALL_DIGITS[1], 2))]
-    out += [("SHIPL", char([r[:4] for r in MINI_SHIP], 1)),                       # tinted
-            ("SHIPR", char([r[4:] for r in MINI_SHIP], 1))]
-    return out
+MAP1, MAP2 = 0x1D00, 0x1D10    # character maps for the bar's two entries
 
 BIG_DIGITS = [
     [0x1F, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1F],
@@ -103,7 +64,8 @@ BIG_DIGITS = [
 ]
 COLON = [0x00, 0x04, 0x04, 0x00, 0x04, 0x04, 0x00]
 
-SHIP = [   # 16 x 9, colours 1-3 of palette 1
+# 16 x 16 pictures; digits are colours 1-3 of whatever palette draws them, '.' transparent
+SHIP = [   # starts 4 lines down
     ".......33.......",
     "......3113......",
     "......1221......",
@@ -114,15 +76,120 @@ SHIP = [   # 16 x 9, colours 1-3 of palette 1
     ".11.1.1111.1.11.",
     ".3...3....3...3.",
 ]
+ROCK = [   # palette 5: dark brown, tan, grey
+    "2211122221112222",
+    "2111112211111221",
+    "1111111111111111",
+    "1222211122222111",
+    "2222221222222211",
+    "2223221222232211",
+    "1222211122222111",
+    "1111111111111111",
+    "2211122222111222",
+    "2111223222112221",
+    "1111122221111111",
+    "1222111111222211",
+    "2222211112222221",
+    "2232211122232221",
+    "1222111111222211",
+    "1111111111111111",
+]
+DRILL = [  # palette 1: white, grey, light blue; the bit's two turns
+    [".......33.......", "......3223......", ".....322223.....", "......3223......",
+     ".....322223.....", "......2222......", ".....111111.....", "....11111111....",
+     "...1122222211...", "...1211331121...", "...1211331121...", "...1222222221...",
+     "..112222222211..", "..1.1.1.1.1.1...", "..1111111111111.", "...1.1.1.1.1.1.."],
+    [".......22.......", "......2332......", ".....233332.....", "......2332......",
+     ".....233332.....", "......2222......", ".....111111.....", "....11111111....",
+     "...1122222211...", "...1211331121...", "...1211331121...", "...1222222221...",
+     "..112222222211..", "...1.1.1.1.1.1..", "..1111111111111.", "..1.1.1.1.1.1..."],
+]
+PLANE = [  # palette 1, seen from above
+    ".......33.......",
+    "......3113......",
+    "......1221......",
+    "......1221......",
+    ".....112211.....",
+    "1111111221111111",
+    "1222222222222221",
+    "1111111221111111",
+    "......1221......",
+    "......1221......",
+    "......1221......",
+    ".....112211.....",
+    "....11122111....",
+    "......1..1......",
+]
+BOMB = [   # palette 3: red, yellow, white; starts 6 lines down
+    ".......33.......",
+    ".......22.......",
+    "......2112......",
+    ".......11.......",
+    ".......11.......",
+]
+BOULDER = [  # palette 5; starts 4 lines down
+    ".....111111.....",
+    "...1122222211...",
+    "..122233322221..",
+    "..122333332221..",
+    ".11222333222211.",
+    ".12222222222221.",
+    ".11222222222211.",
+    "..111222222111..",
+    "....11111111....",
+]
+DUNE = [   # palette 6: olive, gold, sand; starts 5 lines down
+    "......2222......",
+    "....22222222....",
+    "..222233332222..",
+    ".22233311133322.",
+    "2223311111113322",
+    "3311111111111133",
+]
+LANDER = [  # palette 1
+    "......2222......",
+    "....22111122....",
+    "...2113333112...",
+    "...2133333312...",
+    "...2111111112...",
+    "....22222222....",
+    "...2.1.22.1.2...",
+    "..2..1....1..2..",
+    ".2...1....1...2.",
+    "22............22",
+]
+FLAME = [  # palette 3, under the lander's engine; two flickers
+    ["................"] * 7 + ["......3333......", "......2332......", ".......22.......",
+                                ".......21.......", ".......11.......", "........1......."],
+    ["................"] * 7 + ["......3333......", ".......33.......", "......1221......",
+                                "......1..1......", "................", "................"],
+]
+DUST = [   # palette 5; starts 10 lines down
+    "....2.....2.....",
+    "..2212..21122...",
+    ".122221.2222221.",
+    "1111111111111111",
+]
+
+GLYPHS = []      # (name, 16 lines x 16 pixels)
 
 
 def blank():
     return [[0] * 16 for _ in range(16)]
 
 
+def picture(rows, top=0):
+    lines = blank()
+    for r, row in enumerate(rows):
+        for c, ch in enumerate(row):
+            if ch not in ".":
+                lines[top + r][c] = int(ch)
+    return lines
+
+
 def glyph_lines(rows):
-    """A 5x7 font glyph as 16 lines of 16 pixels (colour per pixel, 0 = transparent).
-    Each font pixel is 3 wide and 2 tall; rows 0-1 colour 3, 2-4 colour 2, 5-6 colour 1."""
+    """A 5x7 font glyph as 16 lines of 16 pixels: each font pixel 3 wide and 2 tall;
+    rows 0-1 colour 3, 2-4 colour 2, 5-6 colour 1."""
     lines = blank()
     for r, bits in enumerate(rows):
         colour = 3 if r < 2 else (2 if r < 5 else 1)
@@ -134,17 +201,8 @@ def glyph_lines(rows):
     return lines
 
 
-def ship_lines():
-    lines = blank()
-    for r, row in enumerate(SHIP):
-        for c, ch in enumerate(row):
-            lines[4 + r][c] = 0 if ch == "." else int(ch)
-    return lines
-
-
 def shot_lines(phase):
-    """A 2-pixel bolt, 4 lines tall, starting `phase` * 4 lines down the zone:
-    white head, yellow tail (palette 3)."""
+    """A 2-pixel bolt, 4 lines tall, `phase` * 4 lines down: white head, yellow tail."""
     lines = blank()
     for i, colour in enumerate((3, 3, 2, 2)):
         lines[phase * 4 + i][7] = lines[phase * 4 + i][8] = colour
@@ -152,7 +210,7 @@ def shot_lines(phase):
 
 
 def boom_lines(frame):
-    """Two frames of an explosion: spokes, then scattered sparks (palette 3: red, yellow, white)."""
+    """Two frames of a blast: spokes, then scattered sparks."""
     lines = blank()
     cx, cy = 7.5, 7.5
     if frame == 0:
@@ -176,6 +234,58 @@ def boom_lines(frame):
             if 0 <= x < 16 and 0 <= y < 16:
                 lines[y][x] = 1 if r > 5 else 2
     return lines
+
+
+def build_glyphs():
+    g = [("D%d" % d, glyph_lines(rows)) for d, rows in enumerate(BIG_DIGITS)]
+    g += [("COLON", glyph_lines(COLON)), ("SHIP", picture(SHIP, 4))]
+    g += [("SHOT%d" % p, shot_lines(p)) for p in range(4)]
+    g += [("BOOM0", boom_lines(0)), ("BOOM1", boom_lines(1))]
+    g += [("ROCK", picture(ROCK)), ("DRILL0", picture(DRILL[0])), ("DRILL1", picture(DRILL[1])),
+          ("PLANE", picture(PLANE)), ("BOMB", picture(BOMB, 6)), ("BOULDER", picture(BOULDER, 4)),
+          ("DUNE", picture(DUNE, 5)), ("LANDER", picture(LANDER)), ("FLAME0", picture(FLAME[0])),
+          ("FLAME1", picture(FLAME[1])), ("DUST", picture(DUST, 10))]
+    return g
+
+
+GLYPHS = build_glyphs()
+N_GLYPHS = len(GLYPHS)
+
+# character mode (CTRL bit 4 clear): one byte, four pixels, per character, read
+# from (CHARBASE + offset) << 8 | code -- the same pages as the glyphs, after them
+CH_SPACE = N_GLYPHS * 4
+SMALL_DIGITS = [
+    ["111", "101", "101", "101", "111"], ["010", "110", "010", "010", "111"],
+    ["111", "001", "111", "100", "111"], ["111", "001", "111", "001", "111"],
+    ["101", "101", "111", "001", "001"], ["111", "100", "111", "001", "111"],
+    ["111", "100", "111", "101", "111"], ["111", "001", "010", "010", "010"],
+    ["111", "101", "111", "101", "111"], ["111", "101", "111", "001", "111"],
+]
+SMALL_U = ["101", "101", "101", "101", "111"]
+SMALL_P = ["111", "101", "111", "100", "100"]
+MINI_SHIP = ["...11...", "..1111..", ".111111.", "11.11.11", "1......1"]
+
+# the bomber hour's ground: (x, phase, glyph, palette entry byte)
+TERRAIN = [(12, 0, "BOULDER", 0xBC), (50, 20, "DUNE", 0xDC), (130, 8, "BOULDER", 0xBC),
+           (84, 40, "DUNE", 0xDC), (30, 52, "BOULDER", 0xBC), (146, 36, "DUNE", 0xDC)]
+
+
+def small_chars():
+    """(name, 16 lines x 4 pixels) for every character, in code order from CH_SPACE."""
+    def char(rows, colour):
+        lines = [[0] * 4 for _ in range(16)]
+        for r, row in enumerate(rows):
+            for c, ch in enumerate(row):
+                if ch not in ".0":
+                    lines[5 + r][c] = colour
+        return lines
+    out = [("SPACE", char([], 0))]
+    out += [("D%d" % d, char(rows, 3)) for d, rows in enumerate(SMALL_DIGITS)]   # yellow
+    out += [("U", char(SMALL_U, 2)), ("P", char(SMALL_P, 2)),                   # red
+            ("R1", char(SMALL_DIGITS[1], 2))]
+    out += [("SHIPL", char([r[:4] for r in MINI_SHIP], 1)),                       # tinted
+            ("SHIPR", char([r[4:] for r in MINI_SHIP], 1))]
+    return out
 
 
 def pack160a(pixels):
@@ -207,7 +317,17 @@ P3C1     = $2D
 P3C2     = $2E
 P3C3     = $2F
 DPPL     = $30
+P4C1     = $31
+P4C2     = $32
+P4C3     = $33
+CHARBASE = $34
+P5C1     = $35
+P5C2     = $36
+P5C3     = $37
 OFFSET   = $38
+P6C1     = $39
+P6C2     = $3A
+P6C3     = $3B
 CTRL     = $3C
 CLK_SEC  = $4000
 CLK_MIN  = $4001
@@ -217,18 +337,13 @@ CLK_BATTERY = $4008
 CLK_STEPS_HI = $4009
 CLK_STEPS_MID = $400A
 CLK_STEPS_LO = $400B
-CHARBASE = $34
-P4C1     = $31
-P4C2     = $32
-P4C3     = $33
-LIVES    = $00A0
 
 FRAME    = $0080     ; free-running, for flicker only
 LASTSEC  = $0081
 SUBF     = $0082     ; frames since the seconds register last changed (0-59)
-STAGE    = $0083     ; 0-2 = :57-:59, 3-5 = :00-:02, $FF = nothing on
+STAGE    = $0083     ; 0-2 = :57-:59, 3-5 = :00-:02, $FF = no show
 LOCAL    = $0084     ; frames into the current volley
-SECB     = $0085     ; seconds, binary
+SCENE    = $0085     ; this hour's show: hour mod 4
 PTR      = $0086     ; and $0087
 TMP_G    = $0088
 TMP_PAL  = $0089
@@ -236,12 +351,24 @@ TMP_X    = $008A
 SHIPA    = $008B
 SHIPB    = $008C
 SHOTY    = $008D
-BOOM     = $008E     ; a glyph number held across two add_obj calls
+BOOM     = $008E
 FADE_T   = $008F
 ZCNT     = $0090     ; entries in each zone's list, $90-$9F
+LIVES    = $00A0
+TMP_HI   = $00A1     ; the graphics page an entry points at
+POSY     = $00A2     ; put_y: the line its top goes on, counting from zone 0
+PUT_G    = $00A3
+PUT_T    = $00A4
+DIGM     = $00A5     ; the minute draw_min_y draws (BCD)
+OBJY     = $00A6     ; a show's main actor's line, $FF = not shown
+MINB     = $00A7     ; minutes, binary
+TMP2     = $00A8
+TMP3     = $00A9
+TMP_Y    = $00AA
+SCRL     = $00AB
+CARRY    = $00AC
+MOFF     = $00AD     ; added to the minutes' x (a shake)
 """
-
-
 
 CODE_ASM = """
 reset:
@@ -260,22 +387,36 @@ reset:
     STA BACKGRND
     JSR digit_colours
     LDA #$0E
-    STA P1C1                  ; ships: white
+    STA P1C1                  ; ships, rig, bomber, lander: white
     LDA #$08
     STA P1C2                  ; grey
     LDA #$9E
     STA P1C3                  ; light blue
     LDA #$36
-    STA P3C1                  ; shots and blasts: red
+    STA P3C1                  ; shots, blasts, flame: red
     LDA #$1E
     STA P3C2                  ; yellow
     LDA #$0E
     STA P3C3                  ; white
+    LDA #$22
+    STA P5C1                  ; rock: dark brown
+    LDA #$24
+    STA P5C2                  ; tan
+    LDA #$06
+    STA P5C3                  ; grey
+    LDA #$14
+    STA P6C1                  ; dunes: olive
+    LDA #$1A
+    STA P6C2                  ; gold
+    LDA #$18
+    STA P6C3                  ; sand
     LDA #$00
     TAX
 clear:
     STA DLBASE,X
     STA DLBASE+$100,X
+    STA DLBASE+$200,X
+    STA DLBASE+$300,X
     INX
     BNE clear
     STA FRAME
@@ -327,23 +468,6 @@ same_second:
     BCS second_done           ; never past 59
     INC SUBF
 second_done:
-    LDA CLK_SEC               ; seconds in binary: tens * 10 + ones
-    LSR
-    LSR
-    LSR
-    LSR
-    STA TMP_G
-    ASL
-    ASL
-    CLC
-    ADC TMP_G
-    ASL
-    STA TMP_G
-    LDA CLK_SEC
-    AND #$0F
-    CLC
-    ADC TMP_G
-    STA SECB
     LDA CLK_SEC               ; the stage: :57-:59 are 0-2, :00-:02 are 3-5
     CMP #$57
     BCC not_late
@@ -353,12 +477,12 @@ second_done:
     JMP stage_done
 not_late:
     CMP #$03
-    BCS nothing_on
+    BCS no_show
     CLC
     ADC #$03
     STA STAGE
     JMP stage_done
-nothing_on:
+no_show:
     LDA #$FF
     STA STAGE
 stage_done:
@@ -369,9 +493,18 @@ stage_done:
     SBC #$1E
 local_ok:
     STA LOCAL
+    LDA CLK_HOUR              ; this hour's show
+    JSR bcd_to_bin
+    AND #$03
+    STA SCENE
+    LDA CLK_MIN
+    JSR bcd_to_bin
+    STA MINB
+    LDA #$00
+    STA MOFF
 
-    ; ---- empty the lists of zones 5-11 ----
-    LDX #$05
+    ; ---- empty the lists of zones 1-11 ----
+    LDX #$01
 empty:
     LDA #$00
     STA ZCNT,X
@@ -402,90 +535,12 @@ empty:
     JSR add_obj
     LDA #$48
     STA TMP_X
-    LDA #$0A
+    LDA #G_COLON
     JSR add_obj
 
-    ; ---- the minutes: palette 2, or from :59.5 the blast in palette 3 ----
-    LDA STAGE
-    CMP #$02
-    BNE minute_digits
-    LDA SUBF
-    CMP #$1E
-    BCC minute_digits
-    LDA #$7C                  ; palette 3
-    STA TMP_PAL
-    LDA FRAME
-    LSR
-    LSR
-    AND #$01
-    CLC
-    ADC #$10                  ; blast frame 16 or 17
-    STA BOOM
-    LDA #$5C
-    STA TMP_X
-    LDA BOOM
-    JSR add_obj
-    LDA #$70
-    STA TMP_X
-    LDA BOOM
-    JSR add_obj
-    JMP minutes_done
-minute_digits:
-    LDA #$5C                  ; palette 2 (and x = 92, as it happens)
-    STA TMP_PAL
-    STA TMP_X
-    LDA CLK_MIN
-    LSR
-    LSR
-    LSR
-    LSR
-    JSR add_obj
-    LDA #$70
-    STA TMP_X
-    LDA CLK_MIN
-    AND #$0F
-    JSR add_obj
-minutes_done:
-
-    ; ---- colours ----
+    ; ---- colours; a wrist flick with no show on cycles the hues ----
     JSR digit_colours
-    LDA STAGE                 ; a hit flashes the minutes white
-    CMP #$01
-    BEQ maybe_hit
-    CMP #$02
-    BNE no_hit
-    LDA SUBF
-    CMP #$1E
-    BCS no_hit
-maybe_hit:
-    LDA LOCAL
-    CMP #$0C
-    BCC no_hit
-    CMP #$10
-    BCS no_hit
-    LDA #$0E
-    STA P2C1
-    STA P2C2
-    STA P2C3
-no_hit:
-    LDA STAGE                 ; :00 -- the new minute fades in
-    CMP #$03
-    BNE no_fade
-    LDA SUBF
-    LSR
-    LSR
-    STA TMP_G                 ; the luma it has reached
-    LDA #$36
-    JSR fade
-    STA P2C1
-    LDA #$28
-    JSR fade
-    STA P2C2
-    LDA #$1E
-    JSR fade
-    STA P2C3
-no_fade:
-    LDA STAGE                 ; a wrist flick, with nothing else on: hues cycle
+    LDA STAGE
     CMP #$FF
     BNE no_look
     LDA CLK_FLAGS
@@ -500,139 +555,22 @@ no_fade:
     STA P2C3
 no_look:
 
-    ; ---- the two attackers, zone 9 ----
-    LDA STAGE
-    CMP #$FF
-    BNE ships_on
-    JMP ships_done
-ships_on:
-    CMP #$00
-    BNE not_arriving
-    LDA SUBF                  ; :57 -- A from the left to 92, B from the right to 112
-    CMP #$36
-    BCS a_there
+    ; ---- this hour's show draws the minutes and its actors ----
+    LDA SCENE
     ASL
-    SEC
-    SBC #$10
-    JMP a_set
-a_there:
-    LDA #$5C
-a_set:
-    STA SHIPA
-    LDA SUBF
-    CMP #$20
-    BCS b_there
-    ASL
-    STA TMP_G
-    LDA #$B0
-    SEC
-    SBC TMP_G
-    JMP b_set
-b_there:
-    LDA #$70
-b_set:
-    STA SHIPB
-    JMP place_ships
-not_arriving:
-    CMP #$05
-    BNE on_station
-    LDA SUBF                  ; :02 -- they leave the way they came
-    ASL
-    STA TMP_G
-    LDA #$5C
-    SEC
-    SBC TMP_G
-    STA SHIPA
-    LDA #$70
-    CLC
-    ADC TMP_G
-    STA SHIPB
-    JMP place_ships
-on_station:
-    LDA #$5C
-    STA SHIPA
-    LDA #$70
-    STA SHIPB
-place_ships:
-    LDA #$3C                  ; palette 1
-    STA TMP_PAL
-    LDX #$09
-    LDA SHIPA
-    STA TMP_X
-    LDA #$0B
-    JSR add_obj
-    LDA SHIPB
-    STA TMP_X
-    LDA #$0B
-    JSR add_obj
-
-    ; ---- their shots: :58 and the first half of :59 ----
-    LDA STAGE
-    CMP #$01
-    BEQ shots_maybe
-    CMP #$02
-    BNE ships_done
-    LDA SUBF
-    CMP #$1E
-    BCS ships_done
-shots_maybe:
-    LDA LOCAL
-    CMP #$0C
-    BCS ships_done
-    ASL                       ; 4 lines a frame
-    ASL
-    STA TMP_G
-    LDA #$2C                  ; y = 44 - 4 * LOCAL, lines below the top of zone 6
-    SEC
-    SBC TMP_G
-    STA SHOTY
-    LSR
-    LSR
-    AND #$03
-    CLC
-    ADC #$0C                  ; the copy shifted to y's 4-line step
-    STA BOOM
-    LDA SHOTY
-    LSR
-    LSR
-    LSR
-    LSR
-    CLC
-    ADC #$06
-    TAX                       ; zone 6, 7 or 8
-    LDA #$7C
-    STA TMP_PAL
-    LDA SHIPA
-    STA TMP_X
-    LDA BOOM
-    JSR add_obj
-    LDA SHIPB
-    STA TMP_X
-    LDA BOOM
-    JSR add_obj
-ships_done:
+    TAX
+    LDA scene_tab+1,X
+    PHA
+    LDA scene_tab,X
+    PHA
+    RTS
+scene_return:
 
     ; ---- the cruiser crosses the bottom once an hour: x = minutes * 2.5 ----
-    LDA CLK_MIN               ; minutes in binary: tens * 10 + ones
-    LSR
-    LSR
-    LSR
+    LDA MINB
     LSR
     STA TMP_G
-    ASL
-    ASL
-    CLC
-    ADC TMP_G
-    ASL
-    STA TMP_G
-    LDA CLK_MIN
-    AND #$0F
-    CLC
-    ADC TMP_G
-    STA SECB                  ; (reused: the minute, binary)
-    LSR
-    STA TMP_G
-    LDA SECB
+    LDA MINB
     ASL
     CLC
     ADC TMP_G
@@ -640,7 +578,7 @@ ships_done:
     LDA #$3C
     STA TMP_PAL
     LDX #$0B
-    LDA #$0B
+    LDA #G_SHIP
     JSR add_obj
 
     ; ---- the bar: lives = battery in 20% steps (at least 1, at most 5) ----
@@ -730,6 +668,436 @@ wait_novb:
     BMI wait_novb
     JMP main
 
+; ======================================================================
+; hour 0: formation
+; ======================================================================
+scene_shooter:
+    LDX #$05                  ; the minutes' zone (add_obj takes the zone in X)
+SHOOTER_CODE
+    JMP scene_return
+
+; ======================================================================
+; hour 1: drill rig
+; ======================================================================
+scene_drill:
+    LDA #$BC                  ; the rock under the clock: zone 6, palette 5
+    STA TMP_PAL
+    LDA #$10
+    STA TMP_X
+    LDX #$06
+rock_loop:
+    LDA #G_ROCK
+    JSR add_obj
+    LDA TMP_X
+    CLC
+    ADC #$10
+    STA TMP_X
+    CMP #$90
+    BNE rock_loop
+    LDA #$FF                  ; where the rig is, by stage
+    STA OBJY
+    LDA STAGE
+    CMP #$00
+    BNE dr_s1
+    LDA SUBF                  ; :57 -- it rises from 152 toward the rock
+    LSR
+    STA TMP2
+    LDA SUBF
+    LSR
+    LSR
+    LSR
+    CLC
+    ADC TMP2
+    STA TMP2
+    LDA #$98
+    SEC
+    SBC TMP2
+    STA OBJY
+    JMP dr_minutes
+dr_s1:
+    CMP #$01
+    BNE dr_s2
+    LDA SUBF                  ; :58 -- bores through the rock
+    LSR
+    LSR
+    STA TMP2
+    LDA #$74
+    SEC
+    SBC TMP2
+    STA OBJY
+    JMP dr_minutes
+dr_s2:
+    CMP #$02
+    BNE dr_s3
+    LDA #$63                  ; :59 -- at the minutes' feet
+    STA OBJY
+    JMP dr_minutes
+dr_s3:
+    CMP #$03
+    BNE dr_s4
+    LDA SUBF                  ; :00 -- pushes the new minute up, 112 to 80
+    LSR
+    STA TMP2
+    LDA SUBF
+    LSR
+    LSR
+    LSR
+    LSR
+    CLC
+    ADC TMP2
+    STA TMP2
+    LDA #$70
+    SEC
+    SBC TMP2
+    STA POSY
+    CLC
+    ADC #$10
+    STA OBJY
+    JMP dr_minutes
+dr_s4:
+    CMP #$04
+    BNE dr_minutes
+    LDA SUBF                  ; :01 -- sinks away
+    CLC
+    ADC #$60
+    STA OBJY
+dr_minutes:
+    LDA CLK_MIN
+    STA DIGM
+    LDA STAGE
+    CMP #$03
+    BEQ dr_rise
+    CMP #$02
+    BNE dr_still
+    LDA SUBF
+    CMP #$1E
+    BCS dr_rubble
+    LDA FRAME                 ; the first half of :59: the minutes shake
+    LSR
+    LSR
+    AND #$01
+    STA MOFF
+dr_still:
+    LDA #$50
+    STA POSY
+dr_rise:
+    JSR draw_min_y
+    JMP dr_rig
+dr_rubble:
+    LDA #$BC                  ; then crumble
+    STA TMP_PAL
+    JSR draw_blast
+dr_rig:
+    LDA OBJY
+    CMP #$FF
+    BEQ dr_done
+    STA POSY
+    LDA #$3C
+    STA TMP_PAL
+    LDA #$66
+    STA TMP_X
+    LDA FRAME
+    LSR
+    LSR
+    AND #$01
+    CLC
+    ADC #G_DRILL0
+    JSR put_y
+    LDA STAGE                 ; grit flies while it bores
+    CMP #$01
+    BEQ dr_grit
+    CMP #$02
+    BNE dr_done
+dr_grit:
+    LDA #$BC
+    STA TMP_PAL
+    LDA #$58
+    STA TMP_X
+    LDA #G_DUST
+    JSR put_y
+    LDA #$74
+    STA TMP_X
+    LDA #G_DUST
+    JSR put_y
+dr_done:
+    JMP scene_return
+
+; ======================================================================
+; hour 2: bomber run
+; ======================================================================
+scene_bomber:
+    LDA STAGE                 ; the ground scrolls half a line a frame during the show
+    CMP #$FF
+    BEQ bm_still
+    TAX
+    LDA times30,X
+    STA TMP2
+    LDA SUBF
+    LSR
+    CLC
+    ADC TMP2
+    JMP bm_scroll
+bm_still:
+    LDA #$00
+bm_scroll:
+    STA SCRL
+    LDY #$00
+bm_ground:
+    LDA terr_phase,Y
+    CLC
+    ADC SCRL
+    AND #$3F
+    CLC
+    ADC #$60                  ; lines 96-159
+    STA POSY
+    LDA terr_x,Y
+    STA TMP_X
+    LDA terr_pal,Y
+    STA TMP_PAL
+    STY TMP_Y
+    LDA terr_g,Y
+    JSR put_y
+    LDY TMP_Y
+    INY
+    CPY #$06
+    BNE bm_ground
+    LDA #$FF
+    STA OBJY
+    LDA STAGE
+    CMP #$00
+    BNE bm_s1
+    LDA #$B0                  ; :57 -- climbs in from the bottom
+    SEC
+    SBC SUBF
+    STA OBJY
+    JMP bm_min
+bm_s1:
+    CMP #$01
+    BEQ bm_hold
+    CMP #$02
+    BNE bm_s3
+bm_hold:
+    LDA #$74                  ; :58-:59 -- holds under the clock
+    STA OBJY
+    JMP bm_min
+bm_s3:
+    CMP #$03
+    BNE bm_s4
+    LDA SUBF                  ; :00 -- climbs away over the clock
+    LSR
+    LSR
+    STA TMP2
+    LDA #$74
+    SEC
+    SBC SUBF
+    SEC
+    SBC TMP2
+    STA OBJY
+    JMP bm_min
+bm_s4:
+    CMP #$04
+    BNE bm_min
+    LDA SUBF
+    LSR
+    STA TMP2
+    LDA #$2B
+    SEC
+    SBC TMP2
+    STA OBJY
+bm_min:
+    LDA STAGE
+    CMP #$02
+    BNE bm_digits
+    LDA SUBF
+    CMP #$1E
+    BCC bm_bomb
+    LDA #$7C                  ; the second half of :59: the blast
+    STA TMP_PAL
+    JSR draw_blast
+    JMP bm_plane
+bm_bomb:
+    LDA SUBF                  ; the first half: the bomb heads for the minutes
+    LSR
+    STA TMP2
+    LDA SUBF
+    LSR
+    LSR
+    CLC
+    ADC TMP2
+    STA TMP2
+    LDA #$6C
+    SEC
+    SBC TMP2
+    STA POSY
+    LDA #$7C
+    STA TMP_PAL
+    LDA #$66
+    STA TMP_X
+    LDA #G_BOMB
+    JSR put_y
+bm_digits:
+    JSR fade_minutes
+    LDA CLK_MIN
+    STA DIGM
+    LDA #$50
+    STA POSY
+    JSR draw_min_y
+bm_plane:
+    LDA OBJY
+    CMP #$FF
+    BEQ bm_done
+    STA POSY
+    LDA #$3C
+    STA TMP_PAL
+    LDA #$66
+    STA TMP_X
+    LDA #G_PLANE
+    JSR put_y
+bm_done:
+    JMP scene_return
+
+; ======================================================================
+; hour 3: lander
+; ======================================================================
+scene_lander:
+    LDA #$FF
+    STA OBJY
+    LDA #$50                  ; where the minutes sit
+    STA POSY
+    LDA CLK_MIN
+    STA DIGM
+    LDA #$00
+    STA CARRY                 ; 1: the minutes hang under the lander; 2: landed
+    LDA STAGE
+    CMP #$00
+    BNE ld_s1
+    JSR ease48                ; :57 -- comes down to hover over the clock
+    CLC
+    ADC #$10
+    STA OBJY
+    JMP ld_draw
+ld_s1:
+    CMP #$01
+    BNE ld_s2
+    LDA SUBF                  ; :58 -- takes hold, then lifts the old minute
+    CMP #$0F
+    BCS ld_lift
+    LDA #$40
+    STA OBJY
+    JMP ld_draw
+ld_lift:
+    SEC
+    SBC #$0F
+    STA TMP2
+    LSR
+    LSR
+    LSR
+    STA TMP3
+    LDA TMP2
+    SEC
+    SBC TMP3
+    STA TMP2
+    LDA #$40
+    SEC
+    SBC TMP2
+    STA OBJY
+    LDA #$01
+    STA CARRY
+    JMP ld_draw
+ld_s2:
+    CMP #$02
+    BNE ld_s3
+    LDA SUBF                  ; :59 -- carries it away out of sight
+    LSR
+    STA TMP2
+    LDA #$19
+    SEC
+    SBC TMP2
+    STA OBJY
+    LDA #$01
+    STA CARRY
+    JMP ld_draw
+ld_s3:
+    CMP #$03
+    BNE ld_s4
+    LDA SUBF                  ; :00 -- brings the new minute down
+    CMP #$3A
+    BCS ld_landed
+    JSR ease48
+    CLC
+    ADC #$10
+    STA OBJY
+    LDA #$01
+    STA CARRY
+    JMP ld_draw
+ld_landed:
+    LDA #$40                  ; and sets it down
+    STA OBJY
+    LDA #$02
+    STA CARRY
+    JMP ld_draw
+ld_s4:
+    CMP #$04
+    BNE ld_draw
+    LDA #$40                  ; :01 -- lifts off, empty
+    SEC
+    SBC SUBF
+    STA OBJY
+ld_draw:
+    LDA CARRY
+    CMP #$01
+    BNE ld_min
+    LDA OBJY
+    CLC
+    ADC #$10
+    STA POSY
+ld_min:
+    JSR draw_min_y
+    LDA OBJY
+    CMP #$FF
+    BEQ ld_done
+    STA POSY
+    LDA #$66
+    STA TMP_X
+    LDA CARRY
+    CMP #$02
+    BEQ ld_body
+    LDA #$7C                  ; the flame flickers
+    STA TMP_PAL
+    LDA FRAME
+    LSR
+    LSR
+    AND #$01
+    CLC
+    ADC #G_FLAME0
+    JSR put_y
+ld_body:
+    LDA #$3C
+    STA TMP_PAL
+    LDA #G_LANDER
+    JSR put_y
+    LDA CARRY
+    CMP #$02
+    BNE ld_done
+    LDA #$54                  ; dust as it settles
+    STA POSY
+    LDA #$BC
+    STA TMP_PAL
+    LDA #$4C
+    STA TMP_X
+    LDA #G_DUST
+    JSR put_y
+    LDA #$80
+    STA TMP_X
+    LDA #G_DUST
+    JSR put_y
+ld_done:
+    JMP scene_return
+
+; ======================================================================
+; helpers
+; ======================================================================
+
 ; PTR = zone X's display list
 set_ptr:
     LDA zlo,X
@@ -740,9 +1108,18 @@ set_ptr:
 
 ; one 4-byte entry in zone X: glyph A, TMP_PAL (palette | width), at TMP_X; X is kept
 add_obj:
+    PHA
+    LDA #>gfx
+    STA TMP_HI
+    PLA
+; ... with its graphics page in TMP_HI
+add_obj_hi:
     ASL
     ASL
     STA TMP_G
+    LDA ZCNT,X
+    CMP #$0F                  ; a list holds 15
+    BCS add_full
     JSR set_ptr
     LDA ZCNT,X
     ASL
@@ -754,7 +1131,7 @@ add_obj:
     LDA TMP_PAL
     STA (PTR),Y
     INY
-    LDA #>gfx
+    LDA TMP_HI
     STA (PTR),Y
     INY
     LDA TMP_X
@@ -764,6 +1141,143 @@ add_obj:
     LDA #$00                  ; the next entry's byte 1: the end of the list
     STA (PTR),Y
     INC ZCNT,X
+add_full:
+    RTS
+
+; glyph A at TMP_X with its top on line POSY (counting from zone 0's top), to the
+; line: zone POSY/16 points at page $E0 + POSY%16 and the zone below at $D0 +
+; POSY%16, and holey DMA blanks every page outside $E0-$EF. Zones 0 and 12 up
+; are left alone (the first is never cleared, the rest are the bar).
+put_y:
+    STA PUT_G
+    LDA POSY
+    CMP #$10
+    BCC put_done
+    LSR
+    LSR
+    LSR
+    LSR
+    TAX
+    CPX #$0C
+    BCS put_done
+    LDA POSY
+    AND #$0F
+    STA PUT_T
+    CLC
+    ADC #$E0
+    STA TMP_HI
+    LDA PUT_G
+    JSR add_obj_hi
+    LDA PUT_T
+    BEQ put_done
+    INX
+    CPX #$0C
+    BCS put_done
+    LDA PUT_T
+    CLC
+    ADC #$D0
+    STA TMP_HI
+    LDA PUT_G
+    JSR add_obj_hi
+put_done:
+    RTS
+
+; the minute in DIGM at line POSY, palette 2, shaken right by MOFF
+draw_min_y:
+    LDA #$5C
+    STA TMP_PAL
+    CLC
+    ADC MOFF
+    STA TMP_X
+    LDA DIGM
+    LSR
+    LSR
+    LSR
+    LSR
+    JSR put_y
+    LDA #$70
+    CLC
+    ADC MOFF
+    STA TMP_X
+    LDA DIGM
+    AND #$0F
+    JSR put_y
+    RTS
+
+; a blast where the minutes are, in TMP_PAL's palette
+draw_blast:
+    LDA FRAME
+    LSR
+    LSR
+    AND #$01
+    CLC
+    ADC #G_BOOM0
+    STA BOOM
+    LDX #$05
+    LDA #$5C
+    STA TMP_X
+    LDA BOOM
+    JSR add_obj
+    LDA #$70
+    STA TMP_X
+    LDA BOOM
+    JSR add_obj
+    RTS
+
+; :00 -- the new minute fades in
+fade_minutes:
+    LDA STAGE
+    CMP #$03
+    BNE fade_done
+    LDA SUBF
+    LSR
+    LSR
+    STA TMP_G                 ; the luma it has reached
+    LDA #$36
+    JSR fade
+    STA P2C1
+    LDA #$28
+    JSR fade
+    STA P2C2
+    LDA #$1E
+    JSR fade
+    STA P2C3
+fade_done:
+    RTS
+
+; about SUBF * 0.81: 0 to 45 over a second
+ease48:
+    LDA SUBF
+    LSR
+    STA TMP3
+    LSR
+    STA TMP2
+    LSR
+    LSR
+    CLC
+    ADC TMP2
+    CLC
+    ADC TMP3
+    RTS
+
+; BCD to binary
+bcd_to_bin:
+    PHA
+    LSR
+    LSR
+    LSR
+    LSR
+    STA TMP2
+    ASL
+    ASL
+    CLC
+    ADC TMP2
+    ASL
+    STA TMP2
+    PLA
+    AND #$0F
+    CLC
+    ADC TMP2
     RTS
 
 ; a BCD byte's digits as character codes
@@ -810,36 +1324,42 @@ nmi:
 """
 
 
+SHOOTER = "    ; ---- the minutes: palette 2, or from :59.5 the blast in palette 3 ----\n    LDA STAGE\n    CMP #$02\n    BNE minute_digits\n    LDA SUBF\n    CMP #$1E\n    BCC minute_digits\n    LDA #$7C                  ; palette 3\n    STA TMP_PAL\n    JSR draw_blast\n    JMP minutes_done\nminute_digits:\n    LDA #$5C                  ; palette 2 (and x = 92, as it happens)\n    STA TMP_PAL\n    STA TMP_X\n    LDA CLK_MIN\n    LSR\n    LSR\n    LSR\n    LSR\n    JSR add_obj\n    LDA #$70\n    STA TMP_X\n    LDA CLK_MIN\n    AND #$0F\n    JSR add_obj\nminutes_done:\n\n    ; ---- colours: a hit flashes the minutes white; :00 fades the new one in ----\n    LDA STAGE\n    CMP #$01\n    BEQ maybe_hit\n    CMP #$02\n    BNE no_hit\n    LDA SUBF\n    CMP #$1E\n    BCS no_hit\nmaybe_hit:\n    LDA LOCAL\n    CMP #$0C\n    BCC no_hit\n    CMP #$10\n    BCS no_hit\n    LDA #$0E\n    STA P2C1\n    STA P2C2\n    STA P2C3\nno_hit:\n    JSR fade_minutes\n\n    ; ---- the two attackers, zone 9 ----\n    LDA STAGE\n    CMP #$FF\n    BNE ships_on\n    JMP ships_done\nships_on:\n    CMP #$00\n    BNE not_arriving\n    LDA SUBF                  ; :57 -- A from the left to 92, B from the right to 112\n    CMP #$36\n    BCS a_there\n    ASL\n    SEC\n    SBC #$10\n    JMP a_set\na_there:\n    LDA #$5C\na_set:\n    STA SHIPA\n    LDA SUBF\n    CMP #$20\n    BCS b_there\n    ASL\n    STA TMP_G\n    LDA #$B0\n    SEC\n    SBC TMP_G\n    JMP b_set\nb_there:\n    LDA #$70\nb_set:\n    STA SHIPB\n    JMP place_ships\nnot_arriving:\n    CMP #$05\n    BNE on_station\n    LDA SUBF                  ; :02 -- they leave the way they came\n    ASL\n    STA TMP_G\n    LDA #$5C\n    SEC\n    SBC TMP_G\n    STA SHIPA\n    LDA #$70\n    CLC\n    ADC TMP_G\n    STA SHIPB\n    JMP place_ships\non_station:\n    LDA #$5C\n    STA SHIPA\n    LDA #$70\n    STA SHIPB\nplace_ships:\n    LDA #$3C                  ; palette 1\n    STA TMP_PAL\n    LDX #$09\n    LDA SHIPA\n    STA TMP_X\n    LDA #$0B\n    JSR add_obj\n    LDA SHIPB\n    STA TMP_X\n    LDA #$0B\n    JSR add_obj\n\n    ; ---- their shots: :58 and the first half of :59 ----\n    LDA STAGE\n    CMP #$01\n    BEQ shots_maybe\n    CMP #$02\n    BNE ships_done\n    LDA SUBF\n    CMP #$1E\n    BCS ships_done\nshots_maybe:\n    LDA LOCAL\n    CMP #$0C\n    BCS ships_done\n    ASL                       ; 4 lines a frame\n    ASL\n    STA TMP_G\n    LDA #$2C                  ; y = 44 - 4 * LOCAL, lines below the top of zone 6\n    SEC\n    SBC TMP_G\n    STA SHOTY\n    LSR\n    LSR\n    AND #$03\n    CLC\n    ADC #$0C                  ; the copy shifted to y's 4-line step\n    STA BOOM\n    LDA SHOTY\n    LSR\n    LSR\n    LSR\n    LSR\n    CLC\n    ADC #$06\n    TAX                       ; zone 6, 7 or 8\n    LDA #$7C\n    STA TMP_PAL\n    LDA SHIPA\n    STA TMP_X\n    LDA BOOM\n    JSR add_obj\n    LDA SHIPB\n    STA TMP_X\n    LDA BOOM\n    JSR add_obj\nships_done:\n"
+
+
 def source():
-    glyphs = [glyph_lines(d) for d in BIG_DIGITS] + [glyph_lines(COLON), ship_lines()]
-    glyphs += [shot_lines(p) for p in range(4)] + [boom_lines(0), boom_lines(1)]
-    assert len(glyphs) == N_GLYPHS
     L = [ln for ln in ASM.strip().splitlines()]
     a = L.append
     a("DLBASE   = $%04X" % DLBASE)
     a("HUD_DL   = $%04X" % (DLBASE + HUD_ZONE * DL_STRIDE))
     a("MAP1     = $%04X" % MAP1)
     a("MAP2     = $%04X" % MAP2)
+    for i, (name, _) in enumerate(GLYPHS):
+        a("G_%-8s= $%02X" % (name, i))
     for i, (name, _) in enumerate(small_chars()):
         a("CH_%-6s= $%02X" % (name, CH_SPACE + i))
     a("")
     a("    .org $%04X" % ROM_BASE)
+    a(CODE_ASM.strip().replace("SHOOTER_CODE", SHOOTER.rstrip("\n")))
+    a("code_end:")
+    a("    .res $%04X-code_end,$00" % GFX)
     a("gfx:")
     for page in range(16):
         line = 15 - page          # MARIA reads page (high + offset); offset counts 15..0
         data = []
-        for g in glyphs:
+        for _, g in GLYPHS:
             data += pack160a(g[line])
         for _, ch in small_chars():
             px = ch[line]
             data.append((px[0] << 6) | (px[1] << 4) | (px[2] << 2) | px[3])
+        assert len(data) <= 256
         a("    .byte " + ",".join("$%02X" % b for b in data))
         a("    .res $%X,$00" % (256 - len(data)))
     a("")
-    a("dll:")
+    a("dll:                  ; every zone 16 lines, holey DMA for 16-line zones on")
     for z in range(DL_ZONES):
         dl = DLBASE + z * DL_STRIDE
-        a("    .byte $0F,$%02X,$%02X" % (dl >> 8, dl & 0xFF))
+        a("    .byte $4F,$%02X,$%02X" % (dl >> 8, dl & 0xFF))
     a("zlo:")
     a("    .byte " + ",".join("$%02X" % ((DLBASE + z * DL_STRIDE) & 0xFF) for z in range(DL_ZONES)))
     a("zhi:")
@@ -847,12 +1367,23 @@ def source():
     a("hud_dl_init:          ; two character-mode entries, palette 4, 10 characters each")
     a("    .byte $%02X,$60,$%02X,$96,$08" % (MAP1 & 0xFF, MAP1 >> 8))
     a("    .byte $%02X,$60,$%02X,$96,$70" % (MAP2 & 0xFF, MAP2 >> 8))
-    a("xpos:")
-    a("    .byte " + ",".join("$%02X" % x for x in TIME_X))
-    a("")
-    a(CODE_ASM.strip())
-    a("code_end:")
-    a("    .res $FFFA-code_end,$00")
+    a("scene_tab:")
+    a("    .word scene_shooter-1")
+    a("    .word scene_drill-1")
+    a("    .word scene_bomber-1")
+    a("    .word scene_lander-1")
+    a("times30:")
+    a("    .byte $00,$1E,$3C,$5A,$78,$96")
+    a("terr_x:")
+    a("    .byte " + ",".join("$%02X" % t[0] for t in TERRAIN))
+    a("terr_phase:")
+    a("    .byte " + ",".join("$%02X" % t[1] for t in TERRAIN))
+    a("terr_g:")
+    a("    .byte " + ",".join("G_%s" % t[2] for t in TERRAIN))
+    a("terr_pal:")
+    a("    .byte " + ",".join("$%02X" % t[3] for t in TERRAIN))
+    a("tables_end:")
+    a("    .res $FFFA-tables_end,$00")
     a("    .word nmi")
     a("    .word reset")
     a("    .word nmi")

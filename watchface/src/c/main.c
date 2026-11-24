@@ -816,6 +816,10 @@ static void emu_set_clock(void) {
   c[A7800_CLK_STEPS_LO] = bcd(st % 100);
 }
 
+#define OV_BANNER_ROWS 56       // the banner's rows: the cartridge draws over them
+static void overlay_banner(GBitmap *fb);
+static void overlay_date(GBitmap *fb);
+
 // One shown scanline from the emulator, straight into the tube
 static void emu_line(void *ctx, int line, const uint8_t *colours) {
   int y = line - EMU_FIRST_LINE;
@@ -829,9 +833,20 @@ static void emu_line(void *ctx, int line, const uint8_t *colours) {
     inset = s_tube_inset[MH - 1 - y];
   }
   GBitmapDataRowInfo info = gbitmap_get_data_row_info(s_emu_fb, SCREEN_Y + y);
+  uint8_t *row = &info.data[SCREEN_X];
+  if (y < OV_BANNER_ROWS) {
+    // the banner is drawn first; here the cartridge's background colour is
+    // see-through, so whatever it draws passes in front of the banner
+    uint8_t bg = s_emu.palette[0];
+    for (int x = inset; x < MW - inset; x++) {
+      uint8_t col = (colours[x] == bg) ? row[x] : s_lut[colours[x]];
+      row[x] = is_glare(x, y) ? lighten(col) : col;
+    }
+    return;
+  }
   for (int x = inset; x < MW - inset; x++) {
     uint8_t col = s_lut[colours[x]];
-    info.data[SCREEN_X + x] = is_glare(x, y) ? lighten(col) : col;
+    row[x] = is_glare(x, y) ? lighten(col) : col;
   }
 }
 
@@ -853,10 +868,12 @@ static void emu_init(void) {
   s_emu_ok = true;
 }
 
-// ---- the overlay: the face's banner and date, over the cartridge's picture ----
-// Drawn straight into the tube after the 7800's frame, in MARIA colour bytes
-// through the same palette, so it looks like part of the screen. The cartridge
-// keeps these rows empty: the banner sits over zones 2-4, the date over zone 10.
+// ---- the overlay: the face's banner and date ----
+// Drawn straight into the tube in MARIA colour bytes through the same palette,
+// so they look like part of the screen. The banner goes in first and the
+// cartridge draws over it (its background is see-through in those rows), so a
+// lander or a bomber passes in front of the title; the date goes on last, over
+// the picture, in zone 10, which the cartridge keeps clear.
 
 #define OV_DATE_Y 137           // zone 10, between the attackers and the cruiser
 
@@ -897,7 +914,11 @@ static void ov_text_centered(GBitmap *fb, const char *str, int y, int scale, uin
   ov_text(fb, str, (MW - text_width(str, scale)) / 2, y, scale, colour);
 }
 
-static void overlay_draw(GBitmap *fb) {
+static void overlay_banner(GBitmap *fb) {
+  // the banner's rows start black (the tube) under the title, stripes and years
+  for (int y = 0; y < OV_BANNER_ROWS; y++) {
+    for (int x = 0; x < MW; x++) ov_px(fb, x, y, 0x00);
+  }
   // ATARI 7800, white with a red drop shadow
   const char *title = "ATARI 7800";
   int title_x = (MW - text_width(title, 2)) / 2;
@@ -922,6 +943,9 @@ static void overlay_draw(GBitmap *fb) {
     y += heights[i] + 1;
   }
   ov_text_centered(fb, years, 41, 1, 0x9E);
+}
+
+static void overlay_date(GBitmap *fb) {
 
   // the date, between the attackers' station and the cruiser's lane
   time_t now = time(NULL);
@@ -948,9 +972,10 @@ static void emu_draw(GContext *ctx) {
   for (int i = 0; i < EMU_FRAMES_PER_DRAW - 1; i++) {
     a7800_run_frame(&s_emu);
   }
+  overlay_banner(s_emu_fb);
   a7800_set_output(&s_emu, EMU_FIRST_LINE, MH, emu_line, NULL);
   a7800_run_frame(&s_emu);
-  overlay_draw(s_emu_fb);
+  overlay_date(s_emu_fb);
   time_ms(&s1, &ms1);
   graphics_release_frame_buffer(ctx, s_emu_fb);
   s_emu_fb = NULL;
