@@ -11,9 +11,10 @@ from :57 to :02:
     0  formation   two attackers fly in, three volleys, the old minute explodes,
                    the new one fades in, they leave -- all through a falling
                    three-layer star field
-    1  drill rig   a rig bores up through the rock under the clock, the old
-                   minute shakes and crumbles, the rig pushes the new one up
-                   into place and sinks away
+    1  drill rig   a rig bores up through the rock under the clock, leaving a
+                   shaft, the old minute shakes and crumbles, the rig pushes the
+                   new one up into place and sinks away, and the rock grows
+                   back over the shaft
     2  bomber run  the ground scrolls; a bomber climbs in, its bomb takes out the
                    old minute, the new one fades in as it flies off
     3  lander      a lander comes down, lifts the old minute away, and sets the
@@ -533,7 +534,7 @@ BACKDROPS = [
 # (palette7800.c): $12 and $14, say, both come out dark olive
 SHOW_COLOURS = [
     (0x00, 0x22, 0x24, 0x06, 0x14, 0x1A, 0x18, 0x86, 0x0A, 0x0F),   # formation: space
-    (0x12, 0x22, 0x24, 0x06, 0x14, 0x1A, 0x18, 0x32, 0x24, 0x0A),   # drill: under ground
+    (0x12, 0x22, 0x24, 0x06, 0x20, 0x00, 0x20, 0x32, 0x24, 0x0A),   # drill: under ground (6: the shaft)
     (0xC2, 0x22, 0x24, 0x06, 0x14, 0x1A, 0x18, 0xD4, 0xF8, 0x34),   # bomber: farmland
     (0x00, 0x04, 0x08, 0x0E, 0x14, 0x1A, 0x18, 0x84, 0xC8, 0x0F),   # lander: the moon
 ]
@@ -1245,6 +1246,7 @@ dr_s4:
     ADC #$60
     STA OBJY
 dr_minutes:
+    JSR dr_hole               ; the shaft it bores, before the minutes and the rig
     LDA CLK_MIN
     STA DIGM
     LDA STAGE
@@ -1302,8 +1304,109 @@ dr_grit:
     STA TMP_X
     LDA #G_DUST
     JSR put_y
+    LDA STAGE                 ; and chips of rock fall from under it
+    CMP #$01
+    BNE dr_done
+    LDA LOCAL
+    ASL
+    CLC
+    ADC LOCAL                 ; 3 lines a frame
+    AND #$1F
+    CLC
+    ADC #$70                  ; from the rock's underside, 112-143
+    STA POSY
+    LDA #$62
+    STA TMP_X
+    LDA #G_SHOT0
+    JSR put_y
+    LDA POSY
+    CLC
+    ADC #$10
+    AND #$1F
+    CLC
+    ADC #$70
+    STA POSY
+    LDA #$76
+    STA TMP_X
+    LDA #G_SHOT0
+    JSR put_y
 dr_done:
     JMP scene_return
+
+; the shaft through the rock (zone 6, lines 96-111) under the rig: the rock
+; glyph again in palette 6, which the drill hour makes dark, from the shaft's
+; top line down -- one entry, so zone 6's bottom cuts it off at the rock's
+; underside. It opens up behind the bit at :58, is clear through by :00, and
+; after the rig has sunk back out at :01 the rock grows back down from the
+; top in a shimmer of dust.
+dr_hole:
+    LDA STAGE
+    CMP #$01
+    BNE dh_s2
+    LDA OBJY                  ; :58 -- up to the bit
+    CMP #$60
+    BCS dh_low
+    LDA #$60
+dh_low:
+    CMP #$70
+    BCS dh_none
+    BCC dh_draw
+dh_s2:
+    CMP #$02
+    BNE dh_s3
+    LDA #$63                  ; :59 -- at the minutes' feet
+    BNE dh_draw
+dh_s3:
+    CMP #$03
+    BNE dh_s4
+    LDA #$60                  ; :00 -- clear through
+    BNE dh_draw
+dh_s4:
+    CMP #$04
+    BNE dh_none
+    LDA SUBF                  ; :01 -- open until the rig is out, then it closes
+    CMP #$10
+    BCS dh_closing
+    LDA #$60
+    BNE dh_draw
+dh_closing:
+    SEC
+    SBC #$10
+    LSR
+    CLC
+    ADC #$60
+    CMP #$70
+    BCS dh_none
+    STA TMP3
+    JSR dh_draw
+    LDA FRAME                 ; the dust where the rock is growing back
+    AND #$04
+    BEQ dh_none
+    LDA TMP3
+    SEC
+    SBC #$08
+    STA POSY
+    LDA #$BC
+    STA TMP_PAL
+    LDA #$66
+    STA TMP_X
+    LDA #G_BOOM1
+    JMP put_y
+dh_draw:
+    SEC                       ; A = the shaft's top line, 96-111
+    SBC #$60
+    CLC
+    ADC #$E0
+    STA TMP_HI
+    LDA #$DC                  ; palette 6, 4 bytes
+    STA TMP_PAL
+    LDA #$66
+    STA TMP_X
+    LDX #$06
+    LDA #G_ROCK
+    JMP add_obj_hi
+dh_none:
+    RTS
 
 ; ======================================================================
 ; hour 2: bomber run
