@@ -17,11 +17,11 @@ It leans on two other repos and expects them checked out beside it:
 | | |
 |---|---|
 | `tools/gen_m6502_tables.py` | Generates the core's opcode tables (`m6502_tables.h`) from the toolkit's `m6502.py`: one opcode table for both projects. |
-| `tools/mkstub.py` | Builds `clockstub.a78`, an 8K cartridge that draws the time from the clock registers. The smallest proof of the whole path. |
+| `tools/mkstub.py` | Builds `clockstub.a78`, an 8K cartridge that plays the minute change by itself from the clock registers: ships fly in at :57, shoot the old minute out, the new one fades in at :00, they leave at :02. No input recordings: a watch face gets none to replay. |
 | `docs/clock-registers.md` | The read-only block at `$4000-$400F` through which the watch tells a ROM the time. |
 | `tests/harte_pack.py`, `tests/harte_run.c` | Tom Harte's SingleStepTests for the 6502: 10,000 cases for each of the 256 opcodes, checking registers, memory and cycle counts. |
 | `tests/klaus_run.c` | Klaus Dormann's 6502 functional test. |
-| `tests/a78run.c` | Runs a cartridge on the watch core on the host: frames to PPM, RAM dumps, per-frame CPU/DMA/WSYNC time, an input clip, the clock registers. |
+| `tests/a78run.c` | Runs a cartridge on the watch core on the host: frames to PPM, RAM dumps, per-frame CPU/DMA/WSYNC time, the clock registers standing (`-c HHMM`) or running (`-t HHMMSS`), the wrist-flick flag (`-l`). |
 | `tests/riot_check.py` | The toolkit's RIOT test cart against MAME's golden RAM dump, by the toolkit selftest's own rule. |
 | `tests/dma_fit.py` | Runs the toolkit's DMA cost cartridges on the core and fits the same model `dmameasure.py --fit` fits to MAME. |
 
@@ -54,7 +54,7 @@ cp build/clockstub.a78 ../atari7800-40th/resources/data/
 # the host runner
 W=../atari7800-40th/src/c/emu
 cc -O2 -I$W tests/a78run.c $W/a7800.c $W/m6502.c $W/palette7800.c -o build/a78run
-build/a78run build/clockstub.a78 -f 120 -c 2026 -s 119
+build/a78run build/clockstub.a78 -f 480 -t 202656 -s 0,479 -e 4   # :56 to :04, every 4th frame
 
 # 6502 tests (fetch the vectors first: SingleStepTests/65x02 6502/v1, and
 # Klaus2m5/6502_65C02_functional_tests bin_files)
@@ -73,9 +73,11 @@ python tests/dma_fit.py --toolkit ../a7800-toolkit --run build/a78run
 
 - The MAME side of the clock registers: a cart device in the fork that fills
   `$4000-$400F` from the host clock, so a stub runs the same in MAME.
-- Input clips: a MAME Lua plugin that logs one joystick byte per frame during
-  `-playback`, and the watch playing a numbered clip per hour. `a78run -i`
-  already takes that format (b7-4 SWCHA P0, b0 fire).
 - Speed on the watch itself. On this host the clock stub costs about 0.7 million
   x86 instructions per drawn frame (callgrind, `-Os`); the watch face logs
   milliseconds per draw, which is the number that matters.
+
+Input clips (`.inp` recordings replayed on the watch) were dropped: a watch face
+receives no buttons or touch, so a cartridge plays its own animation, keyed to
+the clock registers. `a78run -i` still takes a one-byte-per-frame stream for
+testing.

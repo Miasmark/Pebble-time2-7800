@@ -6,7 +6,10 @@
 //     -o PREFIX    output prefix (default "frame")
 //     -r FILE      dump RAM $1800-$27FF after the run
 //     -w FIRST     first line of the 192-line window (default 42)
-//     -c HHMM      set the clock registers to this time
+//     -c HHMM      set the clock registers to this time (stands still)
+//     -t HHMMSS    set the clock and let it run: a second every 60 frames
+//     -l           set CLK_FLAGS bit 4 (the wearer flicked their wrist)
+//     -e N         snapshot every Nth frame (with -s FIRST,LAST as the range)
 //     -i FILE      input clip: one byte per frame, b7-4 SWCHA P0 bits, b0 fire
 //     -q           quiet
 //     -n           step MSTAT polling loops instruction by instruction (no fast-forward)
@@ -56,7 +59,8 @@ int main(int argc, char **argv) {
     fprintf(stderr, "usage: %s game.a78 [-f N] [-s N,M] [-o PREFIX] [-r FILE] [-w FIRST] [-c HHMM] [-i FILE] [-q]\n", argv[0]);
     return 2;
   }
-  int noskip = 0;
+  int noskip = 0, look = 0, every = 0;
+  long run_clock = -1;
   int frames = 60, quiet = 0, clock_hhmm = -1, probe = -1;
   const char *snaps = "", *prefix = "frame", *ramfile = NULL, *inpfile = NULL;
   for (int i = 2; i < argc; i++) {
@@ -69,6 +73,9 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "-i")) inpfile = argv[++i];
     else if (!strcmp(argv[i], "-q")) quiet = 1;
     else if (!strcmp(argv[i], "-n")) noskip = 1;
+    else if (!strcmp(argv[i], "-t")) run_clock = atol(argv[++i]);
+    else if (!strcmp(argv[i], "-l")) look = 1;
+    else if (!strcmp(argv[i], "-e")) every = atoi(argv[++i]);
     else if (!strcmp(argv[i], "-p")) probe = (int)strtol(argv[++i], NULL, 16);
   }
 
@@ -101,6 +108,7 @@ int main(int argc, char **argv) {
     m.clock[A7800_CLK_MIN] = bcd(clock_hhmm % 100);
   }
 
+  if (look) m.clock[A7800_CLK_FLAGS] |= 0x10;
   int samples[128], nsamples = 0;
   if (probe >= 0 && frames < 201) frames = 201;
   clock_t t0 = clock();
@@ -109,6 +117,12 @@ int main(int argc, char **argv) {
     if (clip && fr < clip_len) {
       m.swcha_in = (uint8_t)((clip[fr] & 0xF0) | 0x0F);
       m.fire = clip[fr] & 1;
+    }
+    if (run_clock >= 0) {
+      long secs = (run_clock / 10000) * 3600 + ((run_clock / 100) % 100) * 60 + run_clock % 100 + fr / 60;
+      m.clock[A7800_CLK_HOUR] = bcd((int)((secs / 3600) % 24));
+      m.clock[A7800_CLK_MIN] = bcd((int)((secs / 60) % 60));
+      m.clock[A7800_CLK_SEC] = bcd((int)(secs % 60));
     }
     a7800_run_frame(&m);
     if (probe >= 0 && fr + 1 > 120 && fr + 1 <= 200) {
@@ -119,7 +133,13 @@ int main(int argc, char **argv) {
     snprintf(key, sizeof(key), ",%d,", fr);
     char list[512];
     snprintf(list, sizeof(list), ",%s,", snaps);
-    if (strstr(list, key)) {
+    int take = strstr(list, key) != NULL;
+    if (every > 0) {
+      int first = 0, last = -1;
+      sscanf(snaps, "%d,%d", &first, &last);
+      take = fr >= first && fr <= last && (fr - first) % every == 0;
+    }
+    if (take) {
       char path[512];
       snprintf(path, sizeof(path), "%s_%04d.ppm", prefix, fr);
       write_ppm(path);

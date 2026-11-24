@@ -18,14 +18,16 @@ All values are BCD unless marked binary.
 | `$4004` | `CLK_DAY` | day of month, `$01-$31` |
 | `$4005` | `CLK_MONTH` | month, `$01-$12` |
 | `$4006` | `CLK_YEAR` | year, `$00-$99` |
-| `$4007` | `CLK_FLAGS` | b7 the wearer prefers a 12-hour clock, b6 phone linked, b5 charging |
+| `$4007` | `CLK_FLAGS` | b7 the wearer prefers a 12-hour clock, b6 phone linked, b5 charging, b4 this burst came from a wrist flick (the only input a watch face gets) |
 | `$4008` | `CLK_BATTERY` | battery percent, binary 0-100 |
 | `$4009-$400B` | `CLK_STEPS` | steps today, six BCD digits, high byte first |
 | `$400C-$400E` | | reserved, read 0 |
 | `$400F` | `CLK_ID` | `$5A` when the block is present |
 
 The watch updates the block between frames, once a minute while the face is
-idle and every frame during an animation burst. A ROM should read it every
+idle and every watch frame (four 7800 frames) during an animation burst. It
+runs a burst from :57 to :03 every minute, so a ROM can stage the minute
+change in that window; a wrist flick starts a six-second burst with b4 set. A ROM should read it every
 frame and draw from it, so that a single frame after a long sleep already shows
 the right state.
 
