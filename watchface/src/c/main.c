@@ -3,7 +3,7 @@
 // With USE_EMULATOR set (the default), the TV's tube shows a real 7800
 // cartridge -- the STUB_ROM resource -- running on the watch's own 6502 and
 // MARIA (src/c/emu, silent). The watch passes the time to it through clock
-// registers at $4000 (docs/clock-registers.md at the top of this repo) and runs
+// registers at $0600 (docs/clock-registers.md at the top of this repo) and runs
 // EMU_FRAMES_PER_DRAW 7800 frames per watch frame during an animation burst,
 // one draw a minute otherwise. Each 30 draws it logs how long a draw took.
 //

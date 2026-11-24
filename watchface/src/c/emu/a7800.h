@@ -23,8 +23,10 @@
 // Starts as the fork's no-BIOS mode does: INPTCTRL $16, X = SP = $16,
 // decimal and interrupt-disable set, MARIA's DMA off, 972 cycles into frame 0.
 //
-// Optional clock registers (docs/clock-registers.md) answer at
-// $4000-$400F when the cartridge does not reach that far down.
+// Clock registers (docs/clock-registers.md) answer at $0600-$060F, a block
+// nothing in the console, a cartridge mapper or an add-on uses (POKEY, the XM
+// and XBoarD sit at $0400-$047F and $0800, the High Score Cart at $1000 and
+// $3000, cartridges from $4000), so every cartridge size keeps them.
 
 #ifndef A7800_H
 #define A7800_H
@@ -39,7 +41,9 @@
 #define A7800_PICTURE_HALF 67    // pixel 0 is shown 33.5 cycles into the line
 #define A7800_WIDTH 160
 
-// clock register offsets from $4000 (all BCD unless noted)
+#define A7800_CLK_BASE 0x0600
+
+// clock register offsets from A7800_CLK_BASE (all BCD unless noted)
 #define A7800_CLK_SEC 0x0
 #define A7800_CLK_MIN 0x1
 #define A7800_CLK_HOUR 0x2        // 00-23
@@ -66,7 +70,6 @@ typedef struct A7800 {
   uint32_t rom_size;
   uint32_t rom_start;
 
-  bool clock_mapped;
   uint8_t clock[16];
 
   // inputs, set by the caller before a frame

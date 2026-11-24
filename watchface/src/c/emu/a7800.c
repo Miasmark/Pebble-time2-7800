@@ -190,7 +190,7 @@ static uint8_t cpu_read(void *ctx, uint16_t a) {
   if ((a & 0xFE80) == 0x0480) {
     return m->riot_ram[a & 0x7F];
   }
-  if (m->clock_mapped && a >= 0x4000 && a < 0x4010) {
+  if ((a & 0xFFF0) == A7800_CLK_BASE) {
     return m->clock[a & 0x0F];
   }
   return 0x00;   // unmapped (and $2800-$3FFF: MAME maps nothing there)
@@ -237,7 +237,7 @@ static uint8_t dma_peek(A7800 *m, uint16_t a) {
   if ((a & 0xFE80) == 0x0480) {
     return m->riot_ram[a & 0x7F];
   }
-  if (m->clock_mapped && a >= 0x4000 && a < 0x4010) {
+  if ((a & 0xFFF0) == A7800_CLK_BASE) {
     return m->clock[a & 0x0F];
   }
   return 0x00;
@@ -618,7 +618,6 @@ int a7800_load(A7800 *m, const uint8_t *image, uint32_t len) {
   m->rom = data;
   m->rom_size = size;
   m->rom_start = 0x10000 - size;
-  m->clock_mapped = m->rom_start > 0x40FF;
   return 0;
 }
 
@@ -640,7 +639,7 @@ void a7800_power_on(A7800 *m) {
   m->dli = m->dmaon = m->wsync = m->cwidth = m->kangaroo = m->color_kill = m->write_mode = false;
   m->active = 0;
   m->skip_spins = true;
-  m->clock[A7800_CLK_ID] = m->clock_mapped ? 0x5A : 0x00;
+  m->clock[A7800_CLK_ID] = 0x5A;
 
   m6502_init(&m->cpu, cpu_read, cpu_write, m);
   map_pages(m);
