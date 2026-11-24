@@ -1,4 +1,5 @@
 // 7800 40th Anniversary watch face for Pebble Time 2 (emery, 200x228, 64 colours)
+// and Pebble Round 2 (gabbro, 260x260 round, 64 colours)
 //
 // With USE_EMULATOR set (the default), the TV's tube shows a real 7800
 // cartridge -- the STUB_ROM resource -- running on the watch's own 6502 and
@@ -70,8 +71,13 @@
 
 #define MW 160                 // MARIA 160 modes: 160 pixels per line
 #define MH 192                 // 192 visible lines
+#if defined(PBL_ROUND)
+#define SCREEN_X 50            // where the tube sits on the 260x260 round watch: its
+#define SCREEN_Y 32            // corners stay inside the circle
+#else
 #define SCREEN_X 20            // where the tube sits on the 200x228 watch
 #define SCREEN_Y 8
+#endif
 #define TUBE_RADIUS 10         // CRT corner rounding
 
 #define TIME_Y 58
@@ -1144,6 +1150,73 @@ static void draw_label(GContext *ctx, const char *s, int x, int y, GColor colour
   }
 }
 
+#if defined(PBL_ROUND)
+// The Pebble Round 2: a round, space-age set, the tube set in a black shell with
+// a grey rim, the grille on the left, the knobs on the right and the brushed
+// strip, rainbow and console buttons along the bottom.
+static void draw_cabinet(GContext *ctx, GRect b) {
+  GPoint c = GPoint(b.size.w / 2, b.size.h / 2);
+  int r = b.size.w / 2;
+  graphics_context_set_fill_color(ctx, GColorBlack);
+  graphics_fill_rect(ctx, b, 0, GCornerNone);
+  graphics_context_set_fill_color(ctx, GColorDarkGray);
+  graphics_fill_circle(ctx, c, (uint16_t)r);
+  graphics_context_set_fill_color(ctx, GColorBlack);
+  graphics_fill_circle(ctx, c, (uint16_t)(r - 4));
+
+  // speaker grille on the left, channel and volume knobs on the right
+  graphics_context_set_fill_color(ctx, GColorDarkGray);
+  for (int y = 82; y < 194; y += 4) {
+    graphics_fill_rect(ctx, GRect(22, y, 22, 2), 0, GCornerNone);
+  }
+  for (int y = 158; y < 194; y += 4) {
+    graphics_fill_rect(ctx, GRect(b.size.w - 44, y, 22, 2), 0, GCornerNone);
+  }
+  for (int k = 0; k < 2; k++) {
+    GPoint kc = GPoint(b.size.w - 33, 100 + k * 32);
+    graphics_context_set_fill_color(ctx, GColorLightGray);
+    graphics_fill_circle(ctx, kc, 8);
+    graphics_context_set_fill_color(ctx, GColorDarkGray);
+    graphics_fill_circle(ctx, kc, 6);
+    graphics_context_set_stroke_color(ctx, GColorWhite);
+    int dir = k ? 1 : (s_scene * 2 - 3);   // the channel knob turns with the show
+    graphics_draw_line(ctx, kc, GPoint(kc.x + (k ? 4 : dir), kc.y - 4));
+  }
+
+  // tube bezel and recess
+  GRect bezel = GRect(SCREEN_X - 4, SCREEN_Y - 4, MW + 8, MH + 8);
+  graphics_context_set_fill_color(ctx, GColorDarkGray);
+  graphics_fill_rect(ctx, bezel, 8, GCornersAll);
+  graphics_context_set_fill_color(ctx, GColorBlack);
+  graphics_fill_rect(ctx, grect_inset(bezel, GEdgeInsets(2)), 8, GCornersAll);
+
+  // the brushed strip under the tube, with the rainbow left to right
+  GRect plate = GRect(80, SCREEN_Y + MH + 8, b.size.w - 160, 18);
+  graphics_context_set_fill_color(ctx, GColorLightGray);
+  graphics_fill_rect(ctx, plate, 3, GCornersAll);
+  GColor rainbow[10] = {GColorRed, GColorOrange, GColorChromeYellow, GColorYellow,
+                        GColorSpringBud, GColorGreen, GColorCyan, GColorVividCerulean,
+                        GColorBlue, GColorVividViolet};
+  int rx = plate.origin.x + 3;
+  int rw = plate.size.w - 6;
+  for (int i = 0; i < 10; i++) {
+    int x0 = rx + rw * i / 10;
+    int x1 = rx + rw * (i + 1) / 10;
+    graphics_context_set_fill_color(ctx, rainbow[i]);
+    graphics_fill_rect(ctx, GRect(x0, plate.origin.y + 2, x1 - x0, 4), 0, GCornerNone);
+  }
+  draw_label(ctx, "7800", plate.origin.x + 4, plate.origin.y + 9, GColorBlack);
+
+  // power LED (the phone link) and POWER, PAUSE, SELECT, RESET
+  graphics_context_set_fill_color(ctx, s_connected ? GColorGreen : GColorRed);
+  graphics_fill_rect(ctx, GRect(plate.origin.x + 30, plate.origin.y + 11, 3, 3), 0, GCornerNone);
+  for (int i = 0; i < 4; i++) {
+    graphics_context_set_fill_color(ctx, (i == 1 && s_quiet) ? GColorChromeYellow : GColorBlack);
+    graphics_fill_rect(ctx, GRect(plate.origin.x + 37 + i * 15, plate.origin.y + 10, 13, 6), 2,
+                       GCornersAll);
+  }
+}
+#else
 static void draw_cabinet(GContext *ctx, GRect b) {
   graphics_context_set_fill_color(ctx, GColorBlack);
   graphics_fill_rect(ctx, b, 0, GCornerNone);
@@ -1210,6 +1283,7 @@ static void draw_cabinet(GContext *ctx, GRect b) {
     graphics_fill_rect(ctx, GRect(100 + i * 22, 216, 18, 6), 2, GCornersAll);
   }
 }
+#endif
 
 static void canvas_update(Layer *layer, GContext *ctx) {
   draw_cabinet(ctx, layer_get_bounds(layer));

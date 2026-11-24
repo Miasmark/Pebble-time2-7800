@@ -1,6 +1,6 @@
 # Pebble Time 2 7800
 
-A watch face for the Pebble Time 2 celebrating the Atari 7800's 40th
+A watch face for the Pebble Time 2 and Pebble Round 2 celebrating the Atari 7800's 40th
 anniversary (1986–2026). The screen of a little 7800-styled TV runs a real
 7800 cartridge on a 6502 and MARIA emulated on the watch itself. The cartridge
 draws the time and acts out every minute change, with a different show each
@@ -59,10 +59,22 @@ starts.
 seconds after a flick. Battery and steps are read once, as a burst starts, so
 the lives and the scores move at most once a burst.
 
+## Pebble Round 2
+
+The same face builds for the Pebble Round 2 (gabbro): the same 240 MHz chip
+and memory as the Time 2, so the same speed, on a round 260x260 screen. The
+picture is the same 160x192, centred so its corners stay inside the circle, in
+a round, space-age set -- grille on the left, knobs on the right, the brushed
+strip, rainbow and console buttons underneath.
+
+![The four shows on the Pebble Round 2](docs/round-shows.gif)
+
 ## Installing
 
 The face is a Pebble project in `watchface/`, targeting the Pebble Time 2
-(emery).
+(emery) and the Pebble Round 2 (gabbro). The other Pebbles are not targeted:
+their processors (64-100 MHz) cannot run the 7800 in real time and their 64K
+of app memory does not hold the face and its 32K cartridge.
 
 **CloudPebble:** import the repository from GitHub and build. CloudPebble pulls
 the code from GitHub but not the cartridge. Whenever
@@ -74,7 +86,7 @@ the code from GitHub but not the cartridge. Whenever
 ```
 cd watchface
 pebble build
-pebble install --emulator emery      # or --phone <ip>
+pebble install --emulator emery      # or gabbro, or --phone <ip>
 ```
 
 In `watchface/src/c/main.c`:
