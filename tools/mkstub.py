@@ -19,9 +19,10 @@ from :57 to :02:
                    new one down gently in a puff of dust
 
 Under it all: a cruiser that crosses the bottom once an hour, a step a minute,
-and a lives-and-score bar in character mode -- one ship per 20% of battery
+and a lives-and-score bar in character mode -- one life per 20% of battery
 (white; green while charging; red on the last one) and today's steps as the
-1UP score. With CLK_FLAGS bit 4 set (a wrist flick) and no show on, the digits'
+1UP score. The cruiser and the lives are the hour's vehicle: ships, rigs,
+planes or landers. With CLK_FLAGS bit 4 set (a wrist flick) and no show on, the digits'
 top rows cycle through the hues.
 
 Within a second it counts frames, starting again whenever the seconds register
@@ -263,7 +264,15 @@ SMALL_DIGITS = [
 ]
 SMALL_U = ["101", "101", "101", "101", "111"]
 SMALL_P = ["111", "101", "111", "100", "100"]
-MINI_SHIP = ["...11...", "..1111..", ".111111.", "11.11.11", "1......1"]
+# the lives icons, 8 x 5, one per hour's show: each is two characters, left and right
+MINI = [
+    ["...11...", "..1111..", ".111111.", "11.11.11", "1......1"],   # formation: a ship
+    ["...11...", "..1111..", ".111111.", "11111111", ".1.1.1.1"],   # drill: the rig
+    ["...11...", "...11...", "11111111", "...11...", "..1111.."],   # bomber: a plane
+    ["..1111..", ".111111.", "..1111..", ".1....1.", "11....11"],   # lander: a lander
+]
+# and the cruiser across the bottom, one per hour's show
+CRUISER = ["SHIP", "DRILL0", "PLANE", "LANDER"]
 
 # the bomber hour's ground: (x, phase, glyph, palette entry byte)
 TERRAIN = [(12, 0, "BOULDER", 0xBC), (50, 20, "DUNE", 0xDC), (130, 8, "BOULDER", 0xBC),
@@ -283,8 +292,9 @@ def small_chars():
     out += [("D%d" % d, char(rows, 3)) for d, rows in enumerate(SMALL_DIGITS)]   # yellow
     out += [("U", char(SMALL_U, 2)), ("P", char(SMALL_P, 2)),                   # red
             ("R1", char(SMALL_DIGITS[1], 2))]
-    out += [("SHIPL", char([r[:4] for r in MINI_SHIP], 1)),                       # tinted
-            ("SHIPR", char([r[4:] for r in MINI_SHIP], 1))]
+    for k, icon in enumerate(MINI):                                             # tinted
+        out += [("LIFE%dL" % k, char([r[:4] for r in icon], 1)),
+                ("LIFE%dR" % k, char([r[4:] for r in icon], 1))]
     return out
 
 
@@ -566,7 +576,8 @@ no_look:
     RTS
 scene_return:
 
-    ; ---- the cruiser crosses the bottom once an hour: x = minutes * 2.5 ----
+    ; ---- the cruiser -- this hour's vehicle -- crosses the bottom once an hour,
+    ; x = minutes * 2.5 ----
     LDA MINB
     LSR
     STA TMP_G
@@ -577,8 +588,9 @@ scene_return:
     STA TMP_X
     LDA #$3C
     STA TMP_PAL
+    LDY SCENE
+    LDA cruiser_g,Y
     LDX #$0B
-    LDA #G_SHIP
     JSR add_obj
 
     ; ---- the bar: lives = battery in 20% steps (at least 1, at most 5) ----
@@ -613,14 +625,20 @@ not_charging:
     LDA #$36
 tint_set:
     STA P4C1
+    LDA SCENE                 ; the lives are this hour's vehicle too
+    ASL
+    CLC
+    ADC #CH_LIFE0L
+    STA TMP2
     LDY #$00
     LDX #$00
 fill_lives:
     CPX LIVES
     BCS no_life
-    LDA #CH_SHIPL
+    LDA TMP2
     STA MAP1,Y
-    LDA #CH_SHIPR
+    CLC
+    ADC #$01
     STA MAP1+1,Y
     JMP next_life
 no_life:
@@ -1372,6 +1390,8 @@ def source():
     a("    .word scene_drill-1")
     a("    .word scene_bomber-1")
     a("    .word scene_lander-1")
+    a("cruiser_g:")
+    a("    .byte " + ",".join("G_%s" % g for g in CRUISER))
     a("times30:")
     a("    .byte $00,$1E,$3C,$5A,$78,$96")
     a("terr_x:")
