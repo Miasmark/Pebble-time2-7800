@@ -7,8 +7,8 @@
 // registers at $0600 (docs/clock-registers.md at the top of this repo) and runs
 // EMU_FRAMES_PER_DRAW 7800 frames per watch frame during an animation burst,
 // one draw a minute otherwise. Each 30 draws it logs how long a draw took.
-// A wrist flick changes the channel: the cartridge's show moves on by one
-// (static, then the next show), and the choice is kept across restarts.
+// A wrist flick changes the channel: the cartridge's show moves on by one, through
+// all eleven (static, then the next show), and the choice is kept across restarts.
 // It also passes the best day's steps (the HI score, from the step history and
 // a stored record) and flags for 12-hour time, a lost phone, a new best day and
 // Quiet Time -- in which there are no minute shows, one draw a minute, and the
@@ -651,8 +651,12 @@ static int s_frames_left;
 static AppTimer *s_preminute_timer;
 static bool s_look;            // this burst came from a wrist flick
 // the channel: each wrist flick moves the show on by one (the cartridge shows
-// hour + channel, mod 4); kept across restarts
+// hour + channel, mod NUM_SHOWS); kept across restarts
 #define PERSIST_CHANNEL 1
+#define NUM_SHOWS 11            // the cartridge's shows (tools/mkstub.py)
+// the channel knob's pointer for each show: 8 long, over 270 degrees
+static const int8_t KNOB[NUM_SHOWS][2] = {{-6, 6}, {-8, 2}, {-8, -1}, {-6, -5}, {-4, -7}, {0, -8},
+                                          {4, -7}, {6, -5}, {8, -1}, {8, 2}, {6, 6}};
 #define FLICK_GAP_MS 1500       // taps closer together than this are one flick
 static int s_channel;
 static time_t s_flick_s;
@@ -856,7 +860,7 @@ static void emu_set_clock(void) {
   c[A7800_CLK_HI_M] = bcd((hi / 100) % 100);
   c[A7800_CLK_HI_L] = bcd(hi % 100);
   c[A7800_CLK_CHANNEL] = (uint8_t)s_channel;
-  s_scene = (t->tm_hour + s_channel) % 4;    // the channel knob points at it
+  s_scene = (t->tm_hour + s_channel) % NUM_SHOWS;    // the channel knob points at it
 }
 
 #define OV_BANNER_ROWS 56       // the banner's rows: the cartridge draws over them
@@ -1179,8 +1183,10 @@ static void draw_cabinet(GContext *ctx, GRect b) {
     graphics_context_set_fill_color(ctx, GColorDarkGray);
     graphics_fill_circle(ctx, kc, 6);
     graphics_context_set_stroke_color(ctx, GColorWhite);
-    int dir = k ? 1 : (s_scene * 2 - 3);   // the channel knob turns with the show
-    graphics_draw_line(ctx, kc, GPoint(kc.x + (k ? 4 : dir), kc.y - 4));
+    // the channel knob turns with the show; the volume knob stays put
+    GPoint tip = k ? GPoint(kc.x + 4, kc.y - 4)
+                   : GPoint(kc.x + KNOB[s_scene][0] * 5 / 8, kc.y + KNOB[s_scene][1] * 5 / 8);
+    graphics_draw_line(ctx, kc, tip);
   }
 
   // tube bezel and recess
@@ -1242,9 +1248,10 @@ static void draw_cabinet(GContext *ctx, GRect b) {
     graphics_context_set_fill_color(ctx, GColorDarkGray);
     graphics_fill_circle(ctx, c, 4);
     graphics_context_set_stroke_color(ctx, GColorWhite);
-    // the channel knob's pointer turns with the scene
-    int dir = k ? 1 : (s_scene * 2 - 3);
-    graphics_draw_line(ctx, c, GPoint(c.x + (k ? 3 : dir), c.y - 3));
+    // the channel knob's pointer turns with the show; the volume knob stays put
+    GPoint tip = k ? GPoint(c.x + 3, c.y - 3)
+                   : GPoint(c.x + KNOB[s_scene][0] * 4 / 8, c.y + KNOB[s_scene][1] * 4 / 8);
+    graphics_draw_line(ctx, c, tip);
   }
 
   // tube bezel and recess
@@ -1453,7 +1460,7 @@ static void tap_handler(AccelAxisType axis, int32_t direction) {
   time_ms(&now, &ms);
   int32_t since = (int32_t)(now - s_flick_s) * 1000 + (int32_t)ms - (int32_t)s_flick_ms;
   if (s_flick_s == 0 || since < 0 || since >= FLICK_GAP_MS) {
-    s_channel = (s_channel + 1) & 3;
+    s_channel = (s_channel + 1) % NUM_SHOWS;
     persist_write_int(PERSIST_CHANNEL, s_channel);
     s_flick_s = now;
     s_flick_ms = ms;
@@ -1516,7 +1523,8 @@ static void init(void) {
   update_steps();
 #if USE_EMULATOR
   if (persist_exists(PERSIST_CHANNEL)) {
-    s_channel = (int)persist_read_int(PERSIST_CHANNEL) & 3;
+    s_channel = (int)persist_read_int(PERSIST_CHANNEL) % NUM_SHOWS;
+    if (s_channel < 0) s_channel = 0;
   }
   if (persist_exists(PERSIST_BEST)) {
     s_best_prev = (int)persist_read_int(PERSIST_BEST);

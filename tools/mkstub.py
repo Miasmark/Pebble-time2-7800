@@ -5,8 +5,8 @@
 
 Everything it draws comes from the clock registers (docs/clock-registers.md),
 read every frame -- never from a frame count, because the watch runs only short
-bursts of frames and sleeps in between. Each hour (hour mod 4) has its own show,
-from :57 to :02:
+bursts of frames and sleeps in between. There are eleven shows, one an hour
+((hour + channel) mod 11), each playing from :57 to :02:
 
     0  formation   two attackers fly in, three volleys, the old minute explodes,
                    the new one fades in, they leave -- all through a falling
@@ -21,11 +21,29 @@ from :57 to :02:
                    new one down gently in a puff of dust, with the Earth rising
                    over the lunar hills behind
 
+and seven more, from tools/extra_shows.py, with their pictures in a third
+graphics block:
+
+    4  tower       a climber scales a brick tower drawn in 320A (zones 8-10,
+                   switched by display list interrupt, the bricks in the
+                   television's artifact colours) and punches the old minute off
+    5  lava        a winged rider charges the old minute into a lake of fire
+                   (palette cycling); the new one rises out of it
+    6  desert      flying over the sand on a diagonal; a falcon carries the old
+                   minute off and brings the new one
+    7  night race  the kerbs and the centre line rush by (palette cycling); the
+                   car turns into the old minute and shoves it off the road
+    8  dojo        a sunset in bands, black silhouettes; a flying kick
+    9  dungeon     brick walls, flickering torches; a knight, a door, and the new
+                   minute comes up out of the doorway
+   10  mushrooms   the field grows over the hour; a centipede winds through it,
+                   and the old minute is shot
+
 Under it all: a cruiser that crosses the bottom once an hour, a step a minute,
 and a lives-and-score bar in character mode -- one life per 20% of battery
 (white; green while charging; red on the last one) and today's steps as the
 1UP score. The cruiser and the lives are the hour's vehicle: ships, rigs,
-planes or landers. The show is the hour's plus CLK_CHANNEL, which the watch
+planes, landers and so on. The show is the hour's plus CLK_CHANNEL, which the watch
 moves on at each wrist flick; whenever the show changes (a flick, the top of
 the hour, power-on) the picture goes to 0.4 s of TV static first.
 
@@ -50,7 +68,7 @@ GAME OVER when the battery's lives run out; STAGE CLEAR as the cruiser drives
 off the end of the hour; faint snow below the clock while the phone is away;
 and no shows at all while the watch is in Quiet Time (CLK_FLAGS bit 3).
 
-32K, linear ($8000-$FFFF), with two graphics blocks, at $E000 and $A000. No
+32K, linear ($8000-$FFFF), with three graphics blocks, at $E000, $A000 and $C000. No
 signature: the watch starts it without a BIOS, as the a7800 fork of MAME does
 in its no-BIOS mode.
 """
@@ -728,7 +746,7 @@ LASTSEC  = $0081
 SUBF     = $0082     ; frames since the seconds register last changed (0-59)
 STAGE    = $0083     ; 0-2 = :57-:59, 3-5 = :00-:02, $FF = no show
 LOCAL    = $0084     ; frames into the current volley
-SCENE    = $0085     ; this hour's show: hour mod 4
+SCENE    = $0085     ; this hour's show: (hour + channel) mod the number of shows
 PTR      = $0086     ; and $0087
 TMP_G    = $0088
 TMP_PAL  = $0089
@@ -2395,20 +2413,258 @@ assert _o <= 256, "the glyph pages are full (%d bytes)" % _o
 
 # the second block: the characters, then the words, then the snow
 WORDS = ["GAME", "OVER", "STAGE", "CLEAR", "NEW", "HI"]
-BLOCK2 = [(n, l) for n, l in small_chars()]           # one byte each
 BLOCK2_WIDE = [("WD_" + w,) + word_lines(w) for w in WORDS] + [("SNOW", snow_tile(), 32),
                ("BAND", [[2] * 80 for _ in range(16)], 20)]
-BLOCK2_LO = {}
-_o = len(BLOCK2)
-for _n, _l, _b in BLOCK2_WIDE:
-    BLOCK2_LO[_n] = _o
-    _o += _b
-assert _o <= 256, "the second graphics block is full (%d bytes)" % _o
+
+
+def layout_block2():
+    global BLOCK2, BLOCK2_LO, BLOCK2_USED
+    BLOCK2 = [(n, l) for n, l in small_chars()]           # one byte each
+    BLOCK2_LO = {}
+    o = len(BLOCK2)
+    for n, _l, b in BLOCK2_WIDE:
+        BLOCK2_LO[n] = o
+        o += b
+    assert o <= 256, "the second graphics block is full (%d bytes)" % o
+    BLOCK2_USED = o
+
+
+layout_block2()
+
+# ---- the seven shows after the first four (tools/extra_shows.py); --shows picks them ----
+GFX3 = 0xC000             # a third graphics block, for their pictures
+EXTRAS = []
+FEATURES = set()
+BLOCK3 = []               # (name, 16 lines of bytes, bytes wide): the 4-byte glyphs first
+BLOCK3_LO = {}
+N_GLYPHS3 = 0
+BUILTIN_SHOWS = 4
+
+
+def configure(names):
+    """Fold the named extra shows into the cartridge, after the four built in."""
+    global EXTRAS, FEATURES, N_GLYPHS3
+    import extra_shows
+    EXTRAS = [extra_shows.SHOWS[n] for n in names]
+    FEATURES = set()
+    for sh in EXTRAS:
+        FEATURES |= sh["needs"]
+        MINI.append(sh["mini"])
+        CRUISER.append(sh["cruiser"])
+        BACKDROPS.append(sh["backdrop"])
+        SHOW_COLOURS.append(sh["colours"])
+    layout_block2()
+    seen = set()
+    for sh in EXTRAS:
+        for name, rows in sh.get("glyphs", []):
+            if name not in seen:
+                seen.add(name)
+                lines = picture(rows)
+                BLOCK3.append((name, [pack160a(l) for l in lines], 4))
+        for name, rows in sh.get("g320", []):
+            if name not in seen:
+                seen.add(name)
+                BLOCK3.append((name, rows, 4))
+    N_GLYPHS3 = len(BLOCK3)
+    for sh in EXTRAS:
+        for name, rows, nb in sh.get("wides", []):
+            if name not in seen:
+                seen.add(name)
+                BLOCK3.append((name, rows, nb))
+    o = 0
+    for name, rows, nb in BLOCK3:
+        BLOCK3_LO[name] = o
+        o += nb
+    assert o <= 256, "the third graphics block is full (%d bytes)" % o
+    names1 = set(n for n, _ in GLYPHS) | set(n for n, _, _ in WIDE) | set(BLOCK2_LO)
+    assert not (names1 & set(BLOCK3_LO)), names1 & set(BLOCK3_LO)
+
+
+EXTRA_EQU = """
+WSYNC    = $24
+GHI      = $00D4     ; put_y's graphics block: $E0, or $C0 for the third
+NMICTRL  = $00D5     ; the display list interrupt's CTRL for zones 8-10
+NEXTCTRL = $00D6     ; ... for the frame being built
+BDKEY    = $00D7     ; what the still backdrop is kept for: the show, or a growing one's count | $80
+SOFFX5   = $00D8     ; the diagonal layer's x
+PUTG2    = $00D9     ; put_ym: the glyph for 320A zones
+S_X      = $00DA     ; the extra shows' own
+S_T      = $00DB
+S_I      = $00DC
+S_P      = $00DD
+S_Y      = $00DE
+S_G      = $00DF
+"""
+
+EXTRA_HELPERS = """
+; put_y for a glyph in the third block
+put_y3:
+    LDX #$C0
+    STX GHI
+    JSR put_y
+    LDX #$E0
+    STX GHI
+    RTS
+
+; add_obj for a glyph in the third block
+add_obj3:
+    PHA
+    LDA #$C0
+    STA TMP_HI
+    PLA
+    JMP add_obj_hi
+"""
+
+EXTRA_PUT_YM = """
+; put_y3 with a second glyph, PUTG2, for the 320A zones (8-10)
+put_ym:
+    STA PUT_G
+    LDA POSY
+    CMP #$10
+    BCC pm_done
+    LSR
+    LSR
+    LSR
+    LSR
+    TAX
+    CPX #$0C
+    BCS pm_done
+    LDA POSY
+    AND #$0F
+    STA PUT_T
+    CLC
+    ADC #$C0
+    STA TMP_HI
+    JSR pm_pick
+    JSR add_obj_hi
+    LDA PUT_T
+    BEQ pm_done
+    INX
+    CPX #$0C
+    BCS pm_done
+    LDA PUT_T
+    CLC
+    ADC #$B0
+    STA TMP_HI
+    JSR pm_pick
+    JMP add_obj_hi
+pm_done:
+    RTS
+pm_pick:
+    LDA PUT_G
+    CPX #$08
+    BCC pm_160
+    CPX #$0B
+    BCS pm_160
+    LDA PUTG2
+pm_160:
+    RTS
+"""
+
+EXTRA_CYCLE = """
+; palette cycling: three colours from cycles+Y into SHADOW+X (1: palette 5, 7: palette 7)
+cycle:
+    LDA #$03
+    STA TMP3
+cy_loop:
+    LDA cycles,Y
+    STA SHADOW,X
+    INY
+    INX
+    DEC TMP3
+    BNE cy_loop
+    RTS
+"""
+
+
+def sub1(code, old, new):
+    assert code.count(old) == 1, old
+    return code.replace(old, new)
+
+
+def extra_code(code):
+    """The four-show code with the hooks the extra shows need."""
+    n = BUILTIN_SHOWS + len(EXTRAS)
+    f = FEATURES
+    if n != 4:
+        code = sub1(code, "    ADC CLK_CHANNEL\n    AND #$03\n    STA SCENE\n",
+                    "    ADC CLK_CHANNEL\nscene_mod:\n    CMP #$%02X\n    BCC scene_ok\n    SBC #$%02X\n"
+                    "    BCS scene_mod\nscene_ok:\n    STA SCENE\n" % (n, n))
+    if "block3" in f:
+        code = sub1(code, "    STA PUT_T\n    CLC\n    ADC #$E0\n    STA TMP_HI\n",
+                    "    STA PUT_T\n    CLC\n    ADC GHI\n    STA TMP_HI\n")
+        code = sub1(code, "    ADC #$D0\n    STA TMP_HI\n", "    ADC GHI\n    SEC\n    SBC #$10\n    STA TMP_HI\n")
+        code = sub1(code, "    LDA #$3C\n    STA TMP_PAL\n    LDY SCENE\n    LDA cruiser_g,Y\n    LDX #$0B\n    JSR add_obj\n",
+                    "    LDY SCENE\n    LDA cruiser_pw,Y          ; (a wide vehicle: two glyphs side by side)\n"
+                    "    STA TMP_PAL\n    LDA cruiser_hb,Y\n    STA TMP_HI\n    LDA cruiser_g,Y\n"
+                    "    LDX #$0B\n    JSR add_obj_hi\n")
+        code = sub1(code, "    LDA #$40                  ; DMA on, 160A\n    STA CTRL\n",
+                    "    LDA #$E0\n    STA GHI\n    LDA #$40\n    STA NEXTCTRL\n    STA NMICTRL\n"
+                    "    LDA #$40                  ; DMA on, 160A\n    STA CTRL\n")
+    if "dli" in f:
+        code = sub1(code, "    LDA NEXT_DPPL\n    STA DPPL\n",
+                    "    LDA NEXT_DPPL\n    STA DPPL\n    LDA NEXTCTRL\n    STA NMICTRL\n"
+                    "    LDA #$40\n    STA NEXTCTRL\n")
+        code = sub1(code, "words:\n    LDA #>gfx2\n    STA TMP_HI\n    LDX #$08\n",
+                    "words:\n    LDA #>gfx2\n    STA TMP_HI\n    LDX SCENE\n    LDA words_zone,X\n    TAX\n")
+        code = sub1(code, "nmi:\n    RTI\n",
+                    "nmi:                          ; zones 8 and 11: CTRL for 320A zones, then back\n"
+                    "    PHA\n    LDA NMICTRL\n    STA WSYNC\n    STA WSYNC\n    STA CTRL\n    LDA #$40\n"
+                    "    STA NMICTRL\n    PLA\n    RTI\n")
+    if "diag" in f:
+        code = sub1(code, "    STA SOFF+4                ; the ground\n",
+                    "    STA SOFF+4                ; the ground\n    STA SOFF+5                ; the diagonal\n"
+                    "    STA SOFFX5\n")
+        code = sub1(code, "    LDY SIDX\n    LDA bd_x,Y\n    STA TMP_X\n",
+                    "    LDY SIDX\n    LDA bd_l,Y\n    CMP #$05\n    LDA bd_x,Y\n    BCC bdx_ok\n"
+                    "    SBC SOFFX5\nbdx_ok:\n    STA TMP_X\n")
+    if "grow" in f:
+        grow = [k for k, sh in enumerate(EXTRAS) if sh.get("grow")][0] + BUILTIN_SHOWS
+        code = sub1(code, "    LDX SCENE\n    LDA bd_moving,X\n    BNE bd_rebuild\n    LDX BSET\n"
+                          "    LDA BDVALID,X\n    CMP SCENE\n",
+                    "    LDA SCENE                 ; the key: the show, or a growing one's count\n"
+                    "    STA BDKEY\n    CMP #$%02X\n    BNE key_set\n    LDA MINB\n    LSR\n    LSR\n"
+                    "    STA TMP2\n    LSR\n    LSR\n    CLC\n    ADC TMP2\n    ADC #$06\n    ORA #$80\n"
+                    "    STA BDKEY\nkey_set:\n"
+                    "    LDX SCENE\n    LDA bd_moving,X\n    BNE bd_rebuild\n    LDX BSET\n"
+                    "    LDA BDVALID,X\n    CMP BDKEY\n" % grow)
+        code = sub1(code, "bd_still:\n    TXA\n", "bd_still:\n    LDA BDKEY\n")
+        code = sub1(code, "    LDA bd_first+1,X\n    STA BDEND\n",
+                    "    LDA bd_first+1,X\n    STA BDEND\n    LDA BDKEY             ; a growing one: its first n items\n"
+                    "    BPL bd_all\n    AND #$7F\n    CLC\n    ADC BDI\n    STA BDEND\nbd_all:\n")
+    extra = ""
+    if "block3" in f:
+        extra += EXTRA_HELPERS
+    if "dli" in f:
+        extra += EXTRA_PUT_YM
+    if "cycle" in f:
+        extra += EXTRA_CYCLE
+    for sh in EXTRAS:
+        extra += "\n; ======================================================================\n"
+        extra += sh["asm"].strip("\n") + "\n"
+    if extra:
+        code = sub1(code, "\nnmi:", extra + "\nnmi:")
+    return code
 
 
 def source():
     L = [ln for ln in ASM.strip().splitlines()]
     a = L.append
+    if EXTRAS:
+        if "diag" in FEATURES:      # the diagonal layer's offset is SOFF+5, where BDZ was
+            L = [ln.replace("BDZ      = $00CF", "BDZ      = $00D1") for ln in L]
+            a = L.append
+        L += EXTRA_EQU.strip().splitlines()
+        for i, (name, _, _) in enumerate(BLOCK3):
+            if i < N_GLYPHS3:
+                a("G3_%-8s= $%02X" % (name, i))
+            else:
+                a("W3_%-8s= $%02X" % (name, BLOCK3_LO[name]))
+        off = 0
+        for sh in EXTRAS:
+            if "cycle" in sh:
+                a("CYC_%s = $%02X" % (sh["label"][6:].upper(), off))
+                off += 3 * len(sh["cycle"])
     a("DLBASE   = $%04X" % DLBASE)
     a("DLBASE_B = $%04X" % DLBASE_B)
     a("HUD_DL   = $%04X" % (DLBASE + HUD_ZONE * DL_STRIDE))
@@ -2431,7 +2687,7 @@ def source():
         a("W_%-8s= $%02X" % (name, WIDE_LO[name]))
     a("")
     a("    .org $%04X" % ROM_BASE)
-    a(CODE_ASM.strip().replace("SHOOTER_CODE", SHOOTER.rstrip("\n")))
+    a(extra_code(CODE_ASM.strip().replace("SHOOTER_CODE", SHOOTER.rstrip("\n")) + "\n"))
     a("code_end:")
     a("    .res $%04X-code_end,$00" % GFX2)
     a("gfx2:                 ; the second graphics block")
@@ -2447,7 +2703,20 @@ def source():
         a("    .byte " + ",".join("$%02X" % b for b in data))
         a("    .res $%X,$00" % (256 - len(data)))
     a("gfx2_end:")
-    a("    .res $%04X-gfx2_end,$00" % NOISE)
+    if BLOCK3:
+        a("    .res $%04X-gfx2_end,$00" % GFX3)
+        a("gfx3:                 ; the third graphics block: the extra shows' pictures")
+        for page in range(16):
+            line = 15 - page
+            data = []
+            for _, rows, nb in BLOCK3:
+                data += rows[line][:nb]
+            a("    .byte " + ",".join("$%02X" % b for b in data))
+            a("    .res $%X,$00" % (256 - len(data)))
+        a("gfx3_end:")
+        a("    .res $%04X-gfx3_end,$00" % NOISE)
+    else:
+        a("    .res $%04X-gfx2_end,$00" % NOISE)
     a("noise:                ; the static: 16 pages of random bytes")
     seed = 7800
     for _ in range(4096 // 32):
@@ -2476,13 +2745,14 @@ def source():
         a("%s:" % name)
         for z in range(DL_ZONES):
             dl = (DLBASE_B if second and 1 <= z <= 11 else DLBASE) + z * DL_STRIDE
-            a("    .byte $%02X,$%02X,$%02X" % (head, dl >> 8, dl & 0xFF))
+            h = head | (0x80 if "dli" in FEATURES and head == 0x4F and z in (8, 11) else 0)
+            a("    .byte $%02X,$%02X,$%02X" % (h, dl >> 8, dl & 0xFF))
     a("dll_lo:")
     a("    .byte <dll_a,<dll_b,<dlls_a,<dlls_b")
     a("dll_hi:")
     a("    .byte >dll_a,>dll_b,>dlls_a,>dlls_b")
     a("times10:")
-    a("    .byte 0,10,20,30")
+    a("    .byte " + ",".join("%d" % (10 * k) for k in range(len(SHOW_COLOURS))))
     a("show_colours:          ; BACKGRND, P5C1-3, P6C1-3, P7C1-3 for each show")
     for c in SHOW_COLOURS:
         a("    .byte " + ",".join("$%02X" % v for v in c))
@@ -2496,6 +2766,8 @@ def source():
     pictures = dict(GLYPHS)
     pictures.update((n, l) for n, l, _ in WIDE)
     pictures.update((n, l) for n, l, _ in BLOCK2_WIDE)
+    for n, rows, nb in BLOCK3:
+        pictures[n] = [[b for b in r[:nb]] for r in rows]
     def height(g):        # lines down to its last drawn one
         if g == "STAR2":
             # a near star's streak is never carried into the next zone: at a zone's
@@ -2504,8 +2776,12 @@ def source():
             return 1
         return max(i + 1 for i, row in enumerate(pictures[g]) if any(row))
     def hb(g):
+        if g in BLOCK3_LO:
+            return GFX3 >> 8
         return GFX2 >> 8 if g in BLOCK2_LO else GFX >> 8
     def lo(g):
+        if g in BLOCK3_LO:
+            return BLOCK3_LO[g]
         if g in BLOCK2_LO:
             return BLOCK2_LO[g]
         return names.index(g) * 4 if g in names else WIDE_LO[g]
@@ -2540,8 +2816,29 @@ def source():
     a("    .word scene_drill-1")
     a("    .word scene_bomber-1")
     a("    .word scene_lander-1")
+    for sh in EXTRAS:
+        a("    .word %s-1" % sh["label"])
     a("cruiser_g:")
-    a("    .byte " + ",".join("G_%s" % g for g in CRUISER))
+    a("    .byte " + ",".join(("G3_%s" if g in BLOCK3_LO else "G_%s") % g for g in CRUISER))
+    if "block3" in FEATURES:
+        a("cruiser_pw:")
+        a("    .byte " + ",".join("$%02X" % (0x20 | ((32 - (EXTRAS[k - BUILTIN_SHOWS].get("cruiser_bytes", 4)
+                                                          if k >= BUILTIN_SHOWS else 4)) & 0x1F))
+                                 for k in range(len(CRUISER))))
+        a("cruiser_hb:")
+        a("    .byte " + ",".join("$%02X" % ((GFX3 if g in BLOCK3_LO else GFX) >> 8) for g in CRUISER))
+    if "dli" in FEATURES:
+        a("words_zone:")
+        a("    .byte " + ",".join("$%02X" % (6 if k >= BUILTIN_SHOWS and "dli" in EXTRAS[k - BUILTIN_SHOWS]["needs"] else 8)
+                                 for k in range(len(CRUISER))))
+    if "cycle" in FEATURES:
+        a("cycles:")
+        for sh in EXTRAS:
+            if "cycle" in sh:
+                a("    .byte " + ",".join("$%02X" % c for ph in sh["cycle"] for c in ph))
+    for sh in EXTRAS:
+        if sh.get("tables"):
+            L.extend(sh["tables"].strip("\n").splitlines())
     a("times30:")
     a("    .byte $00,$1E,$3C,$5A,$78,$96")
     a("tables_end:")
@@ -2556,7 +2853,13 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.strip().split("\n")[0])
     ap.add_argument("--toolkit", required=True, help="path to the a7800-toolkit checkout")
     ap.add_argument("-o", "--output", required=True)
+    ap.add_argument("--shows", default="all", help="the shows after the first four, from tools/extra_shows.py: "
+                    "comma-separated names, all (the default, the shipped cartridge) or none")
     args = ap.parse_args()
+    if args.shows != "none":
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import extra_shows
+        configure(extra_shows.ORDER if args.shows == "all" else [n for n in args.shows.split(",") if n])
     sys.path.insert(0, os.path.join(args.toolkit, "tools"))
     import asm
     import newgame

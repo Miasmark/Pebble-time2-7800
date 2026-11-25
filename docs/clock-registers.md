@@ -33,7 +33,7 @@ All values are BCD unless marked binary.
 | `$0607` | `CLK_FLAGS` | b7 the wearer prefers a 12-hour clock, b6 phone linked, b5 charging, b4 this burst came from a wrist flick (the only input a watch face gets), b3 paused: the watch is in Quiet Time and draws one frame a minute, so play no shows, b2 today has just beaten the best day (set for one burst), b1-b0 reserved (0) |
 | `$0608` | `CLK_BATTERY` | battery percent, binary 0-100 |
 | `$0609-$060B` | `CLK_STEPS` | steps today, six BCD digits, high byte first |
-| `$060C` | `CLK_CHANNEL` | the channel, binary 0-3: the watch moves it on by one at each wrist flick (and remembers it). The clock stub shows hour + channel, mod 4 |
+| `$060C` | `CLK_CHANNEL` | the channel, binary 0-10: the watch moves it on by one at each wrist flick (and remembers it), back to 0 after 10. The clock stub shows hour + channel, mod 11 |
 | `$060D-$060E` | | reserved, read 0 |
 | `$060F` | `CLK_ID` | `$5A` when the block is present |
 | `$0610-$0612` | `CLK_HI` | the best day's steps (the high score), six BCD digits, high byte first: the best of the watch's step history (30 days) and its stored record, or today's if today is better |

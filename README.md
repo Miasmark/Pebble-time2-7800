@@ -3,27 +3,37 @@
 A watch face for the Pebble Time 2 and Pebble Round 2 celebrating the Atari 7800's 40th
 anniversary (1986–2026). The screen of a little 7800-styled TV runs a real
 7800 cartridge on a 6502 and MARIA emulated on the watch itself. The cartridge
-draws the time and acts out every minute change, with a different show each
-hour. The emulator is silent: the watch has no speaker, so there is no sound.
+draws the time and acts out every minute change, with eleven shows taking
+turns hour by hour. The emulator is silent: the watch has no speaker, so there is no sound.
 
 ![The face during the formation show, the old minute exploding](docs/face.png)
 
 ## What it does
 
-From :57 to :02 of every minute, one of four shows plays the minute change.
+From :57 to :02 of every minute, one of eleven shows plays the minute change.
 The show is picked by the hour and the channel (see below).
 
-![All four shows, :57 to :03](docs/four-shows.gif)
+![The first four shows, :57 to :03](docs/four-shows.gif)
 
-| (hour + channel) mod 4 | show | backdrop |
+![The other seven, :57 to :03](docs/seven-shows.gif)
+
+| (hour + channel) mod 11 | show | backdrop |
 |---|---|---|
 | 0 | **Formation**: two attackers fly in and fire three volleys, the old minute explodes and the new one fades in | deep space, with a three-layer star field falling behind ([closer look](docs/starfield.gif)) |
 | 1 | **Drill rig**: a rig bores up through the rock (chips falling, a dark shaft opening behind it), the old minute shakes and crumbles, the rig pushes the new one up into place, and once it sinks back out the rock grows back over the shaft | under ground: the clock above ground on black, then the rock, and earth with roots, strata, stones and a fossil below |
 | 2 | **Bomber run**: the ground scrolls, a bomber climbs in and its bomb takes out the old minute; the new one fades in as it flies off | farmland: fields, trees, houses and mounds scrolling by under the clock, which stays on black |
 | 3 | **Lander**: a lander comes down, lifts the old minute away and sets the new one down in a puff of dust | the Moon: an Earthrise -- a big half Earth coming up over the lunar hills, stars above, cratered ground in front |
+| 4 | **Tower climb**: a climber scales the tower, punches the old minute off into the night, and the new one drops into place | a brick tower under the clock, drawn in 320A: the bricks are fine stripes that a television shows in two artifact colours |
+| 5 | **Lava joust**: a rider on a winged mount charges the old minute into the lava; the new one rises out of it | a cave over a lake of fire, its colours cycling, with rock ledges and stalactites |
+| 6 | **Desert flight**: a falcon carries the old minute off and brings the new one in | sand, pyramids, palms and dunes drifting by on a diagonal, the clock on black |
+| 7 | **Night race**: the old minute comes down the road and the car turns into it, shoving it off; the new one rises off the horizon | a road into the night: kerbs and a centre line that rush toward the car by palette cycling alone |
+| 8 | **Dojo at sunset**: two fighters spar, and a flying kick knocks the old minute away | a sunset in four bands below the clock, a pagoda, pines and the sun in silhouette |
+| 9 | **Dungeon**: a knight arrives, the door opens, the old minute is struck away, and the new one comes up out of the doorway | a brick wall with two flickering torches |
+| 10 | **Mushroom garden**: a centipede winds through the field, and the old minute is shot | mushrooms that fill the field over the hour: a few at :00, more each minute, about two dozen by :59 |
 
 **Changing the channel.** A wrist flick moves to the next show: a moment of TV
-static, then the next show comes on. The shows still rotate hourly from there.
+static, then the next show comes on. Eleven flicks go all the way round. The
+shows still rotate hourly from there.
 The face remembers the channel when it restarts. A new show always comes in
 through static: after a flick, at the top of the hour, and when the face
 starts.
@@ -43,14 +53,16 @@ starts.
   after the next minute show.
 - **Cruiser:** the vehicle along the bottom crosses the screen once an hour, so
   its position tells you how far into the hour you are. The cruiser and the
-  lives match the current show: ship, rig, plane or lander. In the last
+  lives match the current show: ship, rig, plane, lander, climber, rider,
+  falcon, car, fighter, knight or centipede. In the last
   seconds of the hour it drives off the end and **STAGE CLEAR** flashes.
 - **Power light:** green while the phone is connected, red when it isn't. A
   lost connection also vibrates (except in Quiet Time), and the picture below
   the clock gets faint TV snow until it comes back.
 - **PAUSE button:** lights up during the watch's Quiet Time. The minute shows
   stop and the time is simply updated once a minute; a flick still works.
-- **Channel knob:** the upper knob on the right turns with the show.
+- **Channel knob:** the upper knob on the right turns with the show, through
+  eleven positions.
 
 ![STAGE CLEAR at the end of the hour; NEW HI; GAME OVER with snow from a lost phone and 12-hour time; Quiet Time with PAUSE lit](docs/extras.png)
 
@@ -67,7 +79,7 @@ picture is the same 160x192, centred so its corners stay inside the circle, in
 a round, space-age set -- grille on the left, knobs on the right, the brushed
 strip, rainbow and console buttons underneath.
 
-![The four shows on the Pebble Round 2](docs/round-shows.gif)
+![The first four shows on the Pebble Round 2](docs/round-shows.gif)
 
 ## Installing
 
@@ -123,9 +135,16 @@ In `watchface/src/c/main.c`:
   - **Backdrops:** drawn first in each zone. The still ones are built once and
     kept at the head of each list.
   - **Lives and score bar:** drawn in character mode.
-  - **Graphics:** two 4K blocks, at `$E000` (the sprites and backdrops) and
-    `$A000` (the bar's characters, the words, the snow). Holey DMA blanks the
+  - **Graphics:** three 4K blocks, at `$E000` (the first four shows' sprites
+    and backdrops), `$A000` (the bar's characters, the words, the snow) and
+    `$C000` (the other seven shows' pictures, now full). Holey DMA blanks the
     4K either side of each, which is what lets things cross zone edges.
+  - **More of MARIA in the later shows:** the tower switches zones 8-10 to
+    320A with display list interrupts; the lava, the road and the torches move
+    by palette cycling, stepped once per watch draw so the watch, which shows
+    every fourth frame, sees them move; the desert scrolls on a diagonal layer;
+    the mushroom field is a still backdrop that is rebuilt when its count
+    changes.
 - **The face** (`watchface/src/c/main.c`) draws the TV and then runs the
   emulator straight into the screen. It draws the anniversary banner first and
   the date last.
@@ -140,11 +159,12 @@ In `watchface/src/c/main.c`:
 |---|---|
 | `watchface/` | The Pebble project: `src/c/main.c` (the face), `src/c/emu/` (the 7800), `resources/data/clockstub.a78` (the cartridge). |
 | `tools/mkstub.py` | Builds the cartridge: code, graphics, backdrops and the static are all generated here. |
+| `tools/extra_shows.py` | Shows 4-10: their pictures, backdrops, colours and code. `mkstub.py --shows` builds with a different choice of them (`none` for the first four only). |
 | `tools/mkdemos.py` | Builds the two demo cartridges below: `demo_artifacts.a78` (320A patterns) and `demo_ram.a78` / `demo_mram.a78` (cartridge RAM, plain and mirror). |
 | `tools/gen_artifacts.cpp` | Generates `artifact_table.h` from the fork's `a7800_composite.h` (MiSTer's composite encoder and decoder): runs every pair of colour codes through it and fits the artifact term. |
 | `tools/gen_m6502_tables.py` | Generates the core's opcode tables (`m6502_tables.h`) from the toolkit's `m6502.py`, so both projects share one opcode table. |
 | `docs/clock-registers.md` | The read-only block at `$0600-$061F` through which the watch passes the time, battery, steps, high score, channel and flags to a ROM. No mapper or add-on uses that range, so it works with any cartridge size. |
-| `tests/a78run.c` | Runs a cartridge on the watch core on this computer. It writes frames as PPM (320-mode pairs in artifact colours, or with `-L` the left pixel) and RAM dumps, and reports per-frame CPU/DMA/WSYNC time. Options set the clock standing (`-c HHMM`) or running (`-t HHMMSS`), the wrist-flick flag (`-l`), battery (`-b`), steps (`-S`), charging (`-g`), the channel (`-C`), flicks that change it (`-k`), the high score (`-H`) and a new one (`-N`), Quiet Time (`-Q`), no phone (`-D`) and 12-hour time (`-12`). |
+| `tests/a78run.c` | Runs a cartridge on the watch core on this computer. It writes frames as PPM (320-mode pairs in artifact colours, or with `-L` the left pixel) and RAM dumps, and reports per-frame CPU/DMA/WSYNC time. Options set the clock standing (`-c HHMM`) or running (`-t HHMMSS`), the wrist-flick flag (`-l`), battery (`-b`), steps (`-S`), charging (`-g`), the channel (`-C`, 0-10), flicks that change it (`-k`), the high score (`-H`) and a new one (`-N`), Quiet Time (`-Q`), no phone (`-D`) and 12-hour time (`-12`). |
 | `tests/vbprobe.c` | Reports the line on which a cartridge's main loop finishes each frame. |
 | `tests/harte_pack.py`, `tests/harte_run.c` | Tom Harte's SingleStepTests for the 6502: 10,000 cases per opcode, checking registers, memory and cycle counts. |
 | `tests/klaus_run.c` | Klaus Dormann's 6502 functional test. |
@@ -224,13 +244,18 @@ is the even line above it, so the bands come out two lines at a time.
 | RIOT timer and WSYNC vs MAME (`riot.a78`) | All eight blocks the toolkit checks are exact; the full 4K of RAM is byte-identical to the toolkit simulator's. |
 | DMA cost model vs the fork | Ceiling 1,960 iterations (MAME: 1,960); per line 5.657 cycles (fork 5.62), per zone 1.911 (1.89), per object 1.977 (1.99), per byte 0.750 (0.755). |
 | 320-mode artifact colours vs the fork's composite model | Over all 65,536 pairs of colour codes, the fit gives the model's own colour on the 64-colour screen for 91.4%, and is one step off in a channel for the rest (rms 3.6 of 255). |
-| Skipping the vertical-blank wait loop | Same frames as running it instruction by instruction, for every show, including channel changes. |
-| Cost per watch draw (4 frames, 1 shown) | 3.0–3.3 million x86 instructions on this computer, depending on the show (callgrind, `-Os`), about 0.6 million more while the phone is away (the snow). The face's own log gives the milliseconds on the watch. |
+| Skipping the vertical-blank wait loop | Same frames as running it instruction by instruction, for all eleven shows, including channel changes. |
+| Cost per watch draw (4 frames, 1 shown) | 3.2–4.2 million x86 instructions on this computer in the emulator, depending on the show (callgrind over the face's own code, `-Os`); the seven later shows fall inside the range of the first four. About 0.45 million more while the phone is away (the snow). The face's own log gives the milliseconds on the watch. |
+| Display list entries | At most 14 in any zone, in any show, with the snow (the limit is 15). |
 
 The DLI comes out at 13.1 cycles, against the toolkit's `docs/hardware.md`
 measurement of 17.4. The fork's current `maria.cpp` no longer charges DMA time
 for a DLI, which leaves the 6502's NMI entry and `RTI`: 13 cycles. The 17.4
 looks like a measurement of the earlier fork.
+
+The tower's display list interrupts each wait for two WSYNCs before writing
+CTRL, which puts the switch to 320A (and back) exactly on the zone boundary in
+this core, as in the fork. On a real 7800 it is worth a look.
 
 ## Not done yet
 

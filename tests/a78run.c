@@ -12,7 +12,7 @@
 //     -b PCT       battery percent (CLK_BATTERY, default 100)
 //     -S STEPS     today's steps (CLK_STEPS, default 0)
 //     -g           charging (CLK_FLAGS bit 5)
-//     -C N         the channel (CLK_CHANNEL, 0-3)
+//     -C N         the channel (CLK_CHANNEL, 0-10)
 //     -H STEPS     the best day's steps (CLK_HI)
 //     -N           a new best day (CLK_FLAGS bit 2)
 //     -Q           paused: the watch's Quiet Time (CLK_FLAGS bit 3)
@@ -37,6 +37,8 @@
 
 #include "a7800.h"
 #include "palette7800.h"
+
+#define CHANNELS 11   // the clock cartridge's shows, as the watch counts them
 
 static uint8_t lut[256];
 static uint8_t pix[192][160];
@@ -102,7 +104,7 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "-b")) battery = atoi(argv[++i]);
     else if (!strcmp(argv[i], "-S")) steps = atol(argv[++i]);
     else if (!strcmp(argv[i], "-g")) charging = 1;
-    else if (!strcmp(argv[i], "-C")) channel = atoi(argv[++i]) & 3;
+    else if (!strcmp(argv[i], "-C")) channel = atoi(argv[++i]) % CHANNELS;
     else if (!strcmp(argv[i], "-k")) flicks = argv[++i];
     else if (!strcmp(argv[i], "-H")) hi = atol(argv[++i]);
     else if (!strcmp(argv[i], "-N")) newhi = 1;
@@ -178,7 +180,7 @@ int main(int argc, char **argv) {
       char key[16], list[512];
       snprintf(key, sizeof(key), ",%d,", fr);
       snprintf(list, sizeof(list), ",%s,", flicks);
-      if (strstr(list, key)) channel = (channel + 1) & 3;
+      if (strstr(list, key)) channel = (channel + 1) % CHANNELS;
     }
     m.clock[A7800_CLK_CHANNEL] = (uint8_t)channel;
     a7800_run_frame(&m);
