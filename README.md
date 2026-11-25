@@ -84,7 +84,7 @@ picture is the same 160x192, centred so its corners stay inside the circle, in
 a round, space-age set -- grille on the left, knobs on the right, the brushed
 strip, rainbow and console buttons underneath.
 
-![The first four shows on the Pebble Round 2](docs/round-shows.gif)
+![All eleven channels on the Pebble Round 2, one after another](docs/eleven-channels-round.gif)
 
 ## Installing
 
