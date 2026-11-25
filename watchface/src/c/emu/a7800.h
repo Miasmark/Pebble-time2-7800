@@ -57,7 +57,7 @@
 #define A7800_CLK_STEPS_HI 0x9    // steps, 6 BCD digits, high byte first
 #define A7800_CLK_STEPS_MID 0xA
 #define A7800_CLK_STEPS_LO 0xB
-#define A7800_CLK_CHANNEL 0xC     // 0-3, added to the hour's show (binary)
+#define A7800_CLK_CHANNEL 0xC     // 0-10, added to the hour's show (binary)
 #define A7800_CLK_ID 0xF          // reads $5A when the clock registers are present
 #define A7800_CLK_HI_H 0x10       // the best day's steps, 6 BCD digits, high byte first
 #define A7800_CLK_HI_M 0x11

@@ -40,6 +40,11 @@ starts.
 
 ![Three flicks: static, then the drill rig, the bomber run and the lander](docs/channel-change.gif)
 
+All eleven channels on the face, a second of each minute change (the static
+between them cut):
+
+![All eleven channels, one after another](docs/eleven-channels.gif)
+
 **Reading the screen**
 
 - **Time:** the large digits, in 12- or 24-hour form as the watch is set. The
@@ -129,6 +134,8 @@ In `watchface/src/c/main.c`:
   the time, battery, steps, high score, channel and a few flags from the
   [clock registers](docs/clock-registers.md) at `$0600-$061F` every frame, and
   counts frames within a second, so it never drifts from the watch's clock.
+  The [programmer's guide](docs/programmers-guide.md) explains how to write a
+  cartridge of your own for the face.
   - **Display lists:** built a frame ahead, in two sets that take turns.
   - **Moving actors:** placed to the line across zone boundaries with holey
     DMA, as 7800 games do.
@@ -164,6 +171,7 @@ In `watchface/src/c/main.c`:
 | `tools/gen_artifacts.cpp` | Generates `artifact_table.h` from the fork's `a7800_composite.h` (MiSTer's composite encoder and decoder): runs every pair of colour codes through it and fits the artifact term. |
 | `tools/gen_m6502_tables.py` | Generates the core's opcode tables (`m6502_tables.h`) from the toolkit's `m6502.py`, so both projects share one opcode table. |
 | `docs/clock-registers.md` | The read-only block at `$0600-$061F` through which the watch passes the time, battery, steps, high score, channel and flags to a ROM. No mapper or add-on uses that range, so it works with any cartridge size. |
+| `docs/programmers-guide.md` | Writing your own cartridge for the face: how the watch runs it in draws and bursts, when each clock register changes, keeping time, what part of the picture is shown and what the banner and date cover, animating for a screen that shows one frame in four, and performance. |
 | `tests/a78run.c` | Runs a cartridge on the watch core on this computer. It writes frames as PPM (320-mode pairs in artifact colours, or with `-L` the left pixel) and RAM dumps, and reports per-frame CPU/DMA/WSYNC time. Options set the clock standing (`-c HHMM`) or running (`-t HHMMSS`), the wrist-flick flag (`-l`), battery (`-b`), steps (`-S`), charging (`-g`), the channel (`-C`, 0-10), flicks that change it (`-k`), the high score (`-H`) and a new one (`-N`), Quiet Time (`-Q`), no phone (`-D`) and 12-hour time (`-12`). |
 | `tests/vbprobe.c` | Reports the line on which a cartridge's main loop finishes each frame. |
 | `tests/harte_pack.py`, `tests/harte_run.c` | Tom Harte's SingleStepTests for the 6502: 10,000 cases per opcode, checking registers, memory and cycle counts. |

@@ -39,12 +39,14 @@ All values are BCD unless marked binary.
 | `$0610-$0612` | `CLK_HI` | the best day's steps (the high score), six BCD digits, high byte first: the best of the watch's step history (30 days) and its stored record, or today's if today is better |
 | `$0613-$061F` | | reserved, read 0 |
 
-The watch updates the block between frames, once a minute while the face is
-idle and every watch frame (four 7800 frames) during an animation burst. It
-runs a burst from :57 to :03 every minute, so a ROM can stage the minute
-change in that window; a wrist flick starts a six-second burst with b4 set. A ROM should read it every
-frame and draw from it, so that a single frame after a long sleep already shows
-the right state.
+The watch writes the block before each draw: four 7800 frames, of which the
+last is shown. It draws every 66 ms during an animation burst, from :57 to
+about :03 every minute (so a ROM can stage the minute change in that window)
+and for six seconds after a wrist flick (with b4 set); otherwise only once a
+minute in Quiet Time, and when the system redraws the face. Between draws the
+7800 is stopped. A ROM should read the block every frame and draw from it, so
+that a single draw after a long sleep already shows the right state. The
+[programmer's guide](programmers-guide.md) has the whole story.
 
 Battery, steps, the high score (and the charging and new-best bits) are taken
 once, as a burst starts, and held for the burst.
